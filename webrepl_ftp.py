@@ -246,43 +246,76 @@ def interrupt_running_code(ws):
 
 
 def remote_eval(ws, python_expr, timeout=3000):
-    """Execute Python expression on remote and return output using marker-based detection"""
+    """Execute Python expression on remote and return ONLY the clean output"""
     # CRITICAL: Clear buffer before sending command
     clear_buffer(ws, timeout=0.5)
 
-    # Generate a unique marker that's unlikely to appear in normal output
-    marker = f"_END_{random.randint(100000, 999999)}_"
+    # Use a fixed unique marker
+    marker = "THE_END_OF_THIS_GENERATED_COMMAND"
 
     # Send the command followed by a print statement with our marker
-    full_cmd = f"{python_expr}\nprint('{marker}')\n"
+    full_cmd = f"{python_expr};print('{marker}')\r\n"
     ws.write(full_cmd.encode("utf-8"), frame=WEBREPL_FRAME_TXT)
 
     buf = b""
     t_start = time.time()
     marker_bytes = marker.encode("utf-8")
 
-    # Read until we see the marker
+    # Read until we see the marker TWICE (once as echo, once as actual output)
     while time.time() - t_start < timeout:
         try:
             b = ws.read(1, text_ok=True)
             if b:
                 buf += b
-                # Check if marker is in the buffer
-                if marker_bytes in buf:
-                    debugmsg(f"Found marker {marker} in output")
+                # Count occurrences of marker
+                marker_count = buf.count(marker_bytes)
+                if marker_count >= 2:
+                    debugmsg("Found marker twice in output")
                     break
         except Exception as e:
-            print(f"Error reading response: {e}")
+            debugmsg(f"Error reading response: {e}")
             break
 
-    if marker_bytes not in buf:
-        debugmsg(f"Warning: Marker {marker} not found in output, may have timed out")
+    marker_count = buf.count(marker_bytes)
+    if marker_count < 2:
+        debugmsg(f"Warning: Marker found only {marker_count} time(s), expected 2")
+        return b""
 
-    # Remove the marker and everything after it from the output
-    if marker_bytes in buf:
-        buf = buf.split(marker_bytes)[0]
+    if DEBUG:
+        debugmsg(f"Raw buffer:\n{buf}")
 
-    return buf
+    # Split by marker
+    # parts[0] = everything before first marker (echo of commands up to "print('")
+    # parts[1] = between first and second marker ("')\r\n" from echo + ACTUAL OUTPUT)
+    # parts[2] = after second marker (empty, we stop reading right at the marker)
+    parts = buf.split(marker_bytes)
+
+    if len(parts) < 2:
+        return b""
+
+    # parts[1] contains: "')\r\n" + ACTUAL_OUTPUT
+    output_with_echo_tail = parts[1]
+
+    # Remove the closing of the print statement echo: ')
+    if output_with_echo_tail.startswith(b"')"):
+        clean_output = output_with_echo_tail[2:]
+    else:
+        clean_output = output_with_echo_tail
+
+    # Strip whitespace
+    clean_output = clean_output.strip()
+
+    # Remove any >>> prompts that might remain
+    while clean_output.startswith(b">>>") or clean_output.endswith(b">>>"):
+        if clean_output.startswith(b">>>"):
+            clean_output = clean_output[3:].strip()
+        if clean_output.endswith(b">>>"):
+            clean_output = clean_output[:-3].strip()
+
+    if DEBUG:
+        debugmsg(f"Clean output:\n{clean_output}")
+
+    return clean_output
 
 
 def remote_ls(ws, cwd):
@@ -450,16 +483,10 @@ def cmdloop(ws):
                     print(f"put: {e}")
         elif c == "reset" or c == "reboot":
             try:
-                remote_reset(ws, hard=False)
-                break  # Exit after reset
-            except Exception as e:
-                print(f"reset: {e}")
-        elif c == "hardreset":
-            try:
                 remote_reset(ws, hard=True)
                 break  # Exit after reset
             except Exception as e:
-                print(f"hardreset: {e}")
+                print(f"reset: {e}")
         elif c == "interrupt" or c == "break":
             try:
                 interrupt_running_code(ws)
