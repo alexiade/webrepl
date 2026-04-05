@@ -117,69 +117,138 @@ def get_ver(ws):
 
 
 def do_repl(ws):
-    import termios, select
+    import sys
+    import platform
 
-    class ConsolePosix:
-        def __init__(self):
-            self.infd = sys.stdin.fileno()
-            self.infile = sys.stdin.buffer.raw
-            self.outfile = sys.stdout.buffer.raw
-            self.orig_attr = termios.tcgetattr(self.infd)
+    if platform.system() == "Windows":
+        import msvcrt
 
-        def enter(self):
-            # attr is: [iflag, oflag, cflag, lflag, ispeed, ospeed, cc]
-            attr = termios.tcgetattr(self.infd)
-            attr[0] &= ~(
-                termios.BRKINT | termios.ICRNL | termios.INPCK | termios.ISTRIP | termios.IXON
-            )
-            attr[1] = 0
-            attr[2] = attr[2] & ~(termios.CSIZE | termios.PARENB) | termios.CS8
-            attr[3] = 0
-            attr[6][termios.VMIN] = 1
-            attr[6][termios.VTIME] = 0
-            termios.tcsetattr(self.infd, termios.TCSANOW, attr)
+        class ConsoleWindows:
+            def __init__(self):
+                self.outfile = sys.stdout.buffer
 
-        def exit(self):
-            termios.tcsetattr(self.infd, termios.TCSANOW, self.orig_attr)
+            def enter(self):
+                pass
 
-        def readchar(self):
-            res = select.select([self.infd], [], [], 0)
-            if res[0]:
-                return self.infile.read(1)
-            else:
+            def exit(self):
+                pass
+
+            def readchar(self):
+                if msvcrt.kbhit():
+                    c = msvcrt.getch()
+                    # Normalize to bytes for compatibility
+                    if c == b'\xe0' or c == b'\x00':  # special keys
+                        msvcrt.getch()  # discard next byte
+                        return None
+                    return c
                 return None
 
-        def write(self, buf):
-            self.outfile.write(buf)
+            def write(self, buf):
+                self.outfile.write(buf)
+                self.outfile.flush()
+
+        Console = ConsoleWindows
+
+    else:  # POSIX
+        import termios
+        import select
+
+        class ConsolePosix:
+            def __init__(self):
+                self.infd = sys.stdin.fileno()
+                self.infile = sys.stdin.buffer.raw
+                self.outfile = sys.stdout.buffer.raw
+                self.orig_attr = termios.tcgetattr(self.infd)
+
+            def enter(self):
+                # attr is: [iflag, oflag, cflag, lflag, ispeed, ospeed, cc]
+                attr = termios.tcgetattr(self.infd)
+                attr[0] &= ~(
+                    termios.BRKINT | termios.ICRNL | termios.INPCK | termios.ISTRIP | termios.IXON
+                )
+                attr[1] = 0
+                attr[2] = attr[2] & ~(termios.CSIZE | termios.PARENB) | termios.CS8
+                attr[3] = 0
+                attr[6][termios.VMIN] = 1
+                attr[6][termios.VTIME] = 0
+                termios.tcsetattr(self.infd, termios.TCSANOW, attr)
+
+            def exit(self):
+                termios.tcsetattr(self.infd, termios.TCSANOW, self.orig_attr)
+
+            def readchar(self):
+                import select
+                res = select.select([self.infd], [], [], 0)
+                if res[0]:
+                    return self.infile.read(1)
+                else:
+                    return None
+
+            def write(self, buf):
+                self.outfile.write(buf)
+                self.outfile.flush()
+
+        Console = ConsolePosix
 
     print("Use Ctrl-] to exit this shell")
-    console = ConsolePosix()
+    console = Console()
     console.enter()
     try:
+        import select, time
         while True:
-            sel = select.select([console.infd, ws.s], [], [])
-            c = console.readchar()
-            if c:
-                if c == b"\x1d":  # ctrl-], exit
-                    break
-                else:
-                    ws.write(c, WEBREPL_FRAME_TXT)
-            if ws.s in sel[0]:
-                c = ws.read(1, text_ok=True)
-                while c is not None:
-                    # pass character through to the console
-                    oc = ord(c)
-                    if oc in (8, 9, 10, 13, 27) or oc >= 32:
-                        console.write(c)
+            # On Windows, select does not work with console, so only poll WS
+            if platform.system() == "Windows":
+                # Check for both web socket and user input
+                from select import select as sock_select
+                # sock_select expects sockets
+                readable_ws = [ws.s] if hasattr(ws, 's') else []
+                ws_ready = []
+                try:
+                    ws_ready, _, _ = sock_select(readable_ws, [], [], 0.01)
+                except Exception:
+                    pass
+                c = console.readchar()
+                if c:
+                    if c == b"\x1d":  # ctrl-], exit
+                        break
                     else:
-                        console.write(b"[%02x]" % ord(c))
-                    if ws.buf:
-                        c = ws.read(1)
+                        ws.write(c, WEBREPL_FRAME_TXT)
+                if ws.s in ws_ready:
+                    c = ws.read(1, text_ok=True)
+                    while c is not None:
+                        oc = ord(c)
+                        if oc in (8, 9, 10, 13, 27) or oc >= 32:
+                            console.write(c)
+                        else:
+                            console.write(b"[%02x]" % oc)
+                        if ws.buf:
+                            c = ws.read(1)
+                        else:
+                            c = None
+            else:
+                import select
+                sel = select.select([console.infd, ws.s], [], [])
+                c = console.readchar()
+                if c:
+                    if c == b"\x1d":  # ctrl-], exit
+                        break
                     else:
-                        c = None
+                        ws.write(c, WEBREPL_FRAME_TXT)
+                if ws.s in sel[0]:
+                    c = ws.read(1, text_ok=True)
+                    while c is not None:
+                        # pass character through to the console
+                        oc = ord(c)
+                        if oc in (8, 9, 10, 13, 27) or oc >= 32:
+                            console.write(c)
+                        else:
+                            console.write(b"[%02x]" % oc)
+                        if ws.buf:
+                            c = ws.read(1)
+                        else:
+                            c = None
     finally:
         console.exit()
-
 
 def put_file(ws, local_file, remote_file):
     sz = os.stat(local_file)[6]
