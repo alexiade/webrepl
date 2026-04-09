@@ -380,6 +380,16 @@ def remote_reset(ws, hard=False):
     time.sleep(0.5)
     print("Reset command sent. Connection will be closed.")
 
+def remote_restart(ws):
+    """Restart the worker. This is magic specific to my personal framework."""
+    # Clear buffer first
+    clear_buffer(ws, timeout=0.5)
+    print("Performing worker restart...")
+    pyexpr = "import os; os.chdir('/');import worker; worker.main()"
+
+    ws.write((pyexpr + "\r\n").encode("utf-8"), frame=WEBREPL_FRAME_TXT)
+    time.sleep(0.5)
+    print("Restart command sent.")
 
 def print_remote_ls(filelist):
     """Print formatted file listing"""
@@ -487,6 +497,12 @@ def cmdloop(ws):
                 break  # Exit after reset
             except Exception as e:
                 print(f"reset: {e}")
+        elif c == "restart":
+            try:
+                remote_restart(ws) #this executes worker restart command. My own
+                break  # Exit after reset
+            except Exception as e:
+                print(f"restart: {e}")
         elif c == "interrupt" or c == "break":
             try:
                 interrupt_running_code(ws)
