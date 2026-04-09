@@ -4,22 +4,18 @@ import sys
 import os
 import struct
 import time
-import select
-import random
 
 try:
     import usocket as socket
 except ImportError:
     import socket
 
+import local_commands as lcmd
+import remote_commands as rcmd
+
 USE_BUILTIN_UWEBSOCKET = 0
-SANDBOX = ""
 DEBUG = 0
 
-WEBREPL_REQ_S = "<2sBBQLH64s"
-WEBREPL_PUT_FILE = 1
-WEBREPL_GET_FILE = 2
-WEBREPL_GET_VER = 3
 WEBREPL_FRAME_TXT = 0x81
 WEBREPL_FRAME_BIN = 0x82
 
