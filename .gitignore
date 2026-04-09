@@ -2,3 +2,4 @@ webrepl_content.js
 /.idea
 /*.json
 /.vs
+/.vs/slnx.sqlite
