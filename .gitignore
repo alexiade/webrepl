@@ -11,3 +11,5 @@ webrepl_content.js
 /__pycache__
 /Alexia's-WebREPL-Tools/WebREPL-Commander/bin/Debug/net10.0-windows
 /Alexia's-WebREPL-Tools/WebREPL-Commander/obj
+/Alexia's-WebREPL-Tools/WebREPL-KilnPresets/bin/Debug/net10.0-windows
+/Alexia's-WebREPL-Tools/WebREPL-KilnPresets/obj
