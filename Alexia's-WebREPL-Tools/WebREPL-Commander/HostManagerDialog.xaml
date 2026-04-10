@@ -1,0 +1,188 @@
+<Window x:Class="WebREPL_Commander.HostManagerDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Host Manager" Height="585" Width="741" 
+        WindowStartupLocation="CenterOwner"
+        Background="#000080">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#008080"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#00FFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="5,2"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#00A0A0"/>
+                                <Setter Property="BorderBrush" Value="#00FFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#006060"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Background" Value="#404040"/>
+                                <Setter Property="Foreground" Value="#808080"/>
+                                <Setter Property="BorderBrush" Value="#606060"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Saved Host Configurations" 
+                   Foreground="Yellow" FontWeight="Bold" FontSize="16" Margin="0,0,0,10"/>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="10"/>
+                <ColumnDefinition Width="3*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Host List -->
+            <Border Grid.Column="0" BorderBrush="#00FFFF" BorderThickness="2" Background="Black">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <ListBox Grid.Row="0" Name="lstHosts" Background="Black" Foreground="White" 
+                             BorderThickness="0" FontFamily="Consolas" Padding="5"
+                             SelectionChanged="LstHosts_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="#00FF00"/>
+                                    <TextBlock>
+                                        <TextBlock.Text>
+                                            <MultiBinding StringFormat="{}{0}:{1}">
+                                                <Binding Path="Host"/>
+                                                <Binding Path="Port"/>
+                                            </MultiBinding>
+                                        </TextBlock.Text>
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <StackPanel Grid.Row="1" Margin="5">
+                        <Button Name="btnNew" Content="New" Click="BtnNew_Click" Margin="0,5"
+                                Background="#008080" Foreground="White" BorderBrush="#00FFFF" FontWeight="Bold"/>
+                        <Button Name="btnDelete" Content="Delete" Click="BtnDelete_Click" Margin="0,5"
+                                Background="#800000" Foreground="White" BorderBrush="#00FFFF" FontWeight="Bold"
+                                IsEnabled="False"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Configuration Details -->
+            <Border Grid.Column="2" BorderBrush="#00FFFF" BorderThickness="2" Background="Black" Padding="10">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Name="gridDetails" IsEnabled="False">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Text="Configuration Details" 
+                                   Foreground="Yellow" FontWeight="Bold" Margin="0,0,0,15"/>
+
+                        <TextBlock Grid.Row="1" Text="Name:" Foreground="White" Margin="0,5"/>
+                        <TextBox Grid.Row="2" Name="txtName" Background="Black" Foreground="White" 
+                                 BorderBrush="#00FFFF" BorderThickness="1" Padding="5" Margin="0,0,0,10"/>
+
+                        <TextBlock Grid.Row="3" Text="Host:" Foreground="White" Margin="0,5"/>
+                        <Grid Grid.Row="4" Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="80"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBox Grid.Column="0" Name="txtHost" Background="Black" Foreground="White" 
+                                     BorderBrush="#00FFFF" BorderThickness="1" Padding="5"/>
+                            <TextBlock Grid.Column="2" Text="Port:" Foreground="White" VerticalAlignment="Center"/>
+                            <TextBox Grid.Column="3" Name="txtPort" Text="8266" Background="Black" Foreground="White" 
+                                     BorderBrush="#00FFFF" BorderThickness="1" Padding="5"/>
+                        </Grid>
+
+                        <TextBlock Grid.Row="5" Text="Password:" Foreground="White" Margin="0,5"/>
+                        <PasswordBox Grid.Row="6" Name="txtPassword" Background="Black" Foreground="White" 
+                                     BorderBrush="#00FFFF" BorderThickness="1" Padding="5"
+                                     Height="30" Margin="0,0,0,10"/>
+
+                        <TextBlock Grid.Row="7" Text="Local Default Directory:" Foreground="White" Margin="0,5"/>
+                        <Grid Grid.Row="8" Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Name="txtLocalPath" Background="Black" Foreground="White" 
+                                     BorderBrush="#00FFFF" BorderThickness="1" Padding="5"/>
+                            <Button Grid.Column="1" Name="btnBrowseLocal" Content="Browse..." Click="BtnBrowseLocal_Click"
+                                    Width="80" Margin="5,0,0,0"
+                                    Background="#008080" Foreground="White" BorderBrush="#00FFFF" FontWeight="Bold"/>
+                        </Grid>
+
+                        <TextBlock Grid.Row="9" Text="Remote Default Directory:" Foreground="White" Margin="0,5"/>
+                        <TextBox Grid.Row="10" Name="txtRemotePath" Text="/" Background="Black" Foreground="White" 
+                                 BorderBrush="#00FFFF" BorderThickness="1" Padding="5" Margin="0,0,0,10"/>
+
+                        <StackPanel Grid.Row="12" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
+                            <Button Name="btnSave" Content="Save" Click="BtnSave_Click" Width="80" Margin="5,0"
+                                    Background="#008080" Foreground="White" BorderBrush="#00FFFF" FontWeight="Bold"/>
+                            <Button Name="btnCancel" Content="Cancel" Click="BtnCancel_Click" Width="80" Margin="5,0"
+                                    Background="#008080" Foreground="White" BorderBrush="#00FFFF" FontWeight="Bold"/>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Name="txtConfigPath" Foreground="Yellow" FontSize="10" 
+                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+
+            <Button Grid.Column="2" Content="Close" Click="BtnClose_Click" Width="100"
+                    Background="#008080" Foreground="White" BorderBrush="#00FFFF" FontWeight="Bold"/>
+        </Grid>
+    </Grid>
+</Window>

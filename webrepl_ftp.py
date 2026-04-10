@@ -92,310 +92,11 @@ def login(ws, passwd):
     ws.write(passwd.encode("utf-8") + b"\r")
 
 
-def read_resp(ws):
-    data = ws.read(4)
-    sig, code = struct.unpack("<2sH", data)
-    assert sig == b"WB"
-    return code
-
-
-def send_req(ws, op, sz=0, fname=b""):
-    rec = struct.pack(WEBREPL_REQ_S, b"WA", op, 0, 0, sz, len(fname), fname)
-    debugmsg("%r %d" % (rec, len(rec)))
-    ws.write(rec)
-
-
 def get_ver(ws):
-    send_req(ws, WEBREPL_GET_VER)
+    rcmd.send_req(ws, rcmd.WEBREPL_GET_VER)
     d = ws.read(3)
     d = struct.unpack("<BBB", d)
     return d
-
-
-def put_file(ws, local_file, remote_file):
-    sz = os.stat(local_file)[6]
-    dest_fname = (SANDBOX + remote_file).encode("utf-8")
-    rec = struct.pack(WEBREPL_REQ_S, b"WA", WEBREPL_PUT_FILE, 0, 0, sz, len(dest_fname), dest_fname)
-    debugmsg("%r %d" % (rec, len(rec)))
-    ws.write(rec[:10])
-    ws.write(rec[10:])
-    assert read_resp(ws) == 0
-    cnt = 0
-    with open(local_file, "rb") as f:
-        while True:
-            sys.stdout.write("Sent %d of %d bytes\r" % (cnt, sz))
-            sys.stdout.flush()
-            buf = f.read(1024)
-            if not buf:
-                break
-            ws.write(buf)
-            cnt += len(buf)
-    print()
-    assert read_resp(ws) == 0
-
-
-def get_file(ws, local_file, remote_file):
-    src_fname = (SANDBOX + remote_file).encode("utf-8")
-    rec = struct.pack(WEBREPL_REQ_S, b"WA", WEBREPL_GET_FILE, 0, 0, 0, len(src_fname), src_fname)
-    debugmsg("%r %d" % (rec, len(rec)))
-    ws.write(rec)
-    assert read_resp(ws) == 0
-    with open(local_file, "wb") as f:
-        cnt = 0
-        while True:
-            ws.write(b"\0")
-            (sz,) = struct.unpack("<H", ws.read(2))
-            if sz == 0:
-                break
-            while sz:
-                buf = ws.read(sz)
-                if not buf:
-                    raise OSError()
-                cnt += len(buf)
-                f.write(buf)
-                sz -= len(buf)
-                sys.stdout.write("Received %d bytes\r" % cnt)
-                sys.stdout.flush()
-    print()
-    assert read_resp(ws) == 0
-
-
-# --- Remote execution helpers using WebREPL's eval interface (REPL) ---
-
-def clear_buffer(ws, timeout=1.0):
-    """Aggressively drain all data from websocket buffer and socket"""
-    # Clear the internal buffer first
-    ws.buf = b""
-
-    # Now drain anything waiting on the socket
-    drained = b""
-    start_time = time.time()
-
-    try:
-        # Set socket to non-blocking temporarily
-        ws.s.setblocking(False)
-
-        while time.time() - start_time < timeout:
-            try:
-                # Try to read websocket frames
-                readable, _, _ = select.select([ws.s], [], [], 0.01)
-                if readable:
-                    # Read the frame header
-                    hdr = ws.s.recv(2)
-                    if len(hdr) < 2:
-                        break
-                    fl, sz = struct.unpack(">BB", hdr)
-                    if sz == 126:
-                        hdr2 = ws.s.recv(2)
-                        if len(hdr2) < 2:
-                            break
-                        (sz,) = struct.unpack(">H", hdr2)
-
-                    # Read and discard the payload
-                    while sz > 0:
-                        chunk = ws.s.recv(min(sz, 4096))
-                        if not chunk:
-                            break
-                        drained += chunk
-                        sz -= len(chunk)
-                else:
-                    # No more data available
-                    break
-            except BlockingIOError:
-                # No data available
-                break
-            except Exception as e:
-                debugmsg(f"Error draining buffer: {e}")
-                break
-    finally:
-        # Restore blocking mode
-        ws.s.setblocking(True)
-
-    if DEBUG and drained:
-        debugmsg(f"Drained {len(drained)} bytes from buffer: {drained[:100]}...")
-
-
-def interrupt_running_code(ws):
-    """Send Ctrl+C to interrupt any running code on the MicroPython board"""
-    print("Interrupting any running code...")
-
-    # First, drain any existing output
-    clear_buffer(ws, timeout=0.5)
-
-    # Send Ctrl+C (0x03) multiple times to ensure interruption
-    for _ in range(3):
-        ws.write(b"\x03", frame=WEBREPL_FRAME_TXT)
-        time.sleep(0.1)
-
-    # Wait for interruption to complete
-    time.sleep(0.5)
-
-    # Drain the response (traceback, etc.)
-    clear_buffer(ws, timeout=0.5)
-
-    # Send Enter to get fresh prompt
-    ws.write(b"\r\n", frame=WEBREPL_FRAME_TXT)
-    time.sleep(0.3)
-
-    # Clear any response to the Enter
-    clear_buffer(ws, timeout=0.3)
-
-
-def remote_eval(ws, python_expr, timeout=3000):
-    """Execute Python expression on remote and return ONLY the clean output"""
-    # CRITICAL: Clear buffer before sending command
-    clear_buffer(ws, timeout=0.5)
-
-    # Use a fixed unique marker
-    marker = "THE_END_OF_THIS_GENERATED_COMMAND"
-
-    # Send the command followed by a print statement with our marker
-    full_cmd = f"{python_expr};print('{marker}')\r\n"
-    ws.write(full_cmd.encode("utf-8"), frame=WEBREPL_FRAME_TXT)
-
-    buf = b""
-    t_start = time.time()
-    marker_bytes = marker.encode("utf-8")
-
-    # Read until we see the marker TWICE (once as echo, once as actual output)
-    while time.time() - t_start < timeout:
-        try:
-            b = ws.read(1, text_ok=True)
-            if b:
-                buf += b
-                # Count occurrences of marker
-                marker_count = buf.count(marker_bytes)
-                if marker_count >= 2:
-                    debugmsg("Found marker twice in output")
-                    break
-        except Exception as e:
-            debugmsg(f"Error reading response: {e}")
-            break
-
-    marker_count = buf.count(marker_bytes)
-    if marker_count < 2:
-        debugmsg(f"Warning: Marker found only {marker_count} time(s), expected 2")
-        return b""
-
-    if DEBUG:
-        debugmsg(f"Raw buffer:\n{buf}")
-
-    # Split by marker
-    # parts[0] = everything before first marker (echo of commands up to "print('")
-    # parts[1] = between first and second marker ("')\r\n" from echo + ACTUAL OUTPUT)
-    # parts[2] = after second marker (empty, we stop reading right at the marker)
-    parts = buf.split(marker_bytes)
-
-    if len(parts) < 2:
-        return b""
-
-    # parts[1] contains: "')\r\n" + ACTUAL_OUTPUT
-    output_with_echo_tail = parts[1]
-
-    # Remove the closing of the print statement echo: ')
-    if output_with_echo_tail.startswith(b"')"):
-        clean_output = output_with_echo_tail[2:]
-    else:
-        clean_output = output_with_echo_tail
-
-    # Strip whitespace
-    clean_output = clean_output.strip()
-
-    # Remove any >>> prompts that might remain
-    while clean_output.startswith(b">>>") or clean_output.endswith(b">>>"):
-        if clean_output.startswith(b">>>"):
-            clean_output = clean_output[3:].strip()
-        if clean_output.endswith(b">>>"):
-            clean_output = clean_output[:-3].strip()
-
-    if DEBUG:
-        debugmsg(f"Clean output:\n{clean_output}")
-
-    return clean_output
-
-
-def remote_ls(ws, cwd):
-    """List files in remote directory"""
-    pyexpr = (
-        "import os;print(';'.join([f'{f},{os.stat(f)[0] & 0x4000 != 0},{os.stat(f)[6]}' for f in os.listdir()]))"
-    )
-    out = remote_eval(ws, pyexpr).decode("utf-8", errors='ignore')
-
-    # parse output (very hacky)
-    out = out.strip().split("\n")
-    files = []
-    for l in out:
-        if "," in l:
-            for entry in l.strip().split(";"):
-                parts = entry.split(",")
-                if len(parts) == 3:
-                    name, isdir, size = parts
-                    if name not in (".", ".."):
-                        try:
-                            files.append((name, isdir == "True", int(size)))
-                        except ValueError:
-                            pass  # Skip malformed entries
-    return files
-
-
-def remote_cd(ws, path):
-    """Change remote directory"""
-    # Escape single quotes in path
-    path_escaped = path.replace("'", "\\'")
-    pyexpr = f"import os; os.chdir('{path_escaped}')"
-    remote_eval(ws, pyexpr)
-
-
-def remote_pwd(ws):
-    """Get current remote directory"""
-    pyexpr = "import os;print(os.getcwd())"
-    out = remote_eval(ws, pyexpr).decode("utf-8", errors='ignore')
-
-    # extract latest non-empty line that's not a prompt or echo
-    for l in reversed(out.strip().split("\n")):
-        l_stripped = l.strip()
-        if l_stripped and not l_stripped.startswith(">>>") and not l_stripped.startswith(
-                "import os") and not l_stripped.startswith("print("):
-            return l_stripped
-    return "/"
-
-
-def remote_reset(ws, hard=False):
-    """Reset the MicroPython board"""
-    # Clear buffer first
-    clear_buffer(ws, timeout=0.5)
-
-    if hard:
-        print("Performing hard reset...")
-        pyexpr = "import machine; machine.reset()"
-    else:
-        print("Performing soft reset...")
-        pyexpr = "import machine; machine.soft_reset()"
-
-    ws.write((pyexpr + "\r\n").encode("utf-8"), frame=WEBREPL_FRAME_TXT)
-    time.sleep(0.5)
-    print("Reset command sent. Connection will be closed.")
-
-def remote_restart(ws):
-    """Restart the worker. This is magic specific to my personal framework."""
-    # Clear buffer first
-    clear_buffer(ws, timeout=0.5)
-    print("Performing worker restart...")
-    pyexpr = "import os; os.chdir('/');import worker; worker.main()"
-
-    ws.write((pyexpr + "\r\n").encode("utf-8"), frame=WEBREPL_FRAME_TXT)
-    time.sleep(0.5)
-    print("Restart command sent.")
-
-def print_remote_ls(filelist):
-    """Print formatted file listing"""
-    if not filelist:
-        print("(empty directory)")
-        return
-
-    for name, isdir, size in filelist:
-        flag = "d" if isdir else "-"
-        print(f"{flag} {name:30} {size:>8}")
 
 
 def cmdloop(ws):
@@ -403,7 +104,7 @@ def cmdloop(ws):
     localcwd = os.getcwd()
 
     try:
-        remotecwd = remote_pwd(ws)
+        remotecwd = rcmd.remote_pwd(ws)
     except Exception as e:
         print(f"Warning: Could not get remote directory: {e}")
         remotecwd = "/"
@@ -424,24 +125,21 @@ def cmdloop(ws):
         if c in ("exit", "quit"):
             break
         elif c == "lls":
-            files = os.listdir(localcwd)
-            for f in files:
-                print(f)
+            lcmd.list_local_files(localcwd)
         elif c == "lcd":
             if not args:
                 print(localcwd)
             else:
                 try:
-                    os.chdir(args[0])
-                    localcwd = os.getcwd()
+                    localcwd = lcmd.change_local_dir(localcwd, args[0])
                 except Exception as e:
                     print(f"lcd: {e}")
         elif c == "lpwd":
-            print(localcwd)
+            print(lcmd.get_local_dir(localcwd))
         elif c == "ls":
             try:
-                files = remote_ls(ws, remotecwd)
-                print_remote_ls(files)
+                files = rcmd.remote_ls(ws, remotecwd)
+                rcmd.print_remote_ls(files)
             except Exception as e:
                 print(f"ls: {e}")
         elif c == "cd":
@@ -449,13 +147,13 @@ def cmdloop(ws):
                 print(remotecwd)
             else:
                 try:
-                    remote_cd(ws, args[0])
-                    remotecwd = remote_pwd(ws)
+                    rcmd.remote_cd(ws, args[0])
+                    remotecwd = rcmd.remote_pwd(ws)
                 except Exception as e:
                     print(f"cd: {e}")
         elif c == "pwd":
             try:
-                remotecwd = remote_pwd(ws)
+                remotecwd = rcmd.remote_pwd(ws)
                 print(remotecwd)
             except Exception as e:
                 print(f"pwd: {e}")
@@ -464,47 +162,60 @@ def cmdloop(ws):
                 print("get <remote_file> [local_file]")
             else:
                 remote_file = args[0]
-                if len(args) > 1:
-                    local_file = args[1]
-                else:
-                    local_file = os.path.basename(remote_file)
+                local_file = args[1] if len(args) > 1 else lcmd.get_basename(remote_file)
                 try:
-                    get_file(ws, local_file, remote_file)
+                    rcmd.get_file(ws, local_file, remote_file)
                     print("Downloaded", remote_file, "to", local_file)
                 except Exception as e:
                     print(f"get: {e}")
+        elif c == "getall":
+            if not args:
+                local_dir = os.path.basename(remotecwd) or "download"
+            else:
+                local_dir = args[0]
+            try:
+                print(f"Downloading all files from {remotecwd} to {local_dir}")
+                rcmd.remote_getall(ws, remotecwd, local_dir)
+            except Exception as e:
+                print(f"getall: {e}")
         elif c == "put":
             if not args:
                 print("put <local_file> [remote_file]")
             else:
                 local_file = args[0]
-                if len(args) > 1:
-                    remote_file = args[1]
-                else:
-                    remote_file = os.path.basename(local_file)
+                remote_file = args[1] if len(args) > 1 else lcmd.get_basename(local_file)
                 try:
-                    put_file(ws, local_file, remote_file)
+                    rcmd.put_file(ws, local_file, remote_file)
                     print("Uploaded", local_file, "to", remote_file)
                 except Exception as e:
                     print(f"put: {e}")
+        elif c == "del" or c == "rm":
+            if not args:
+                print("del <remote_file>")
+            else:
+                remote_file = args[0]
+                try:
+                    rcmd.remote_del(ws, remote_file)
+                    print(f"Deleted {remote_file}")
+                except Exception as e:
+                    print(f"del: {e}")
         elif c == "reset" or c == "reboot":
             try:
-                remote_reset(ws, hard=True)
-                break  # Exit after reset
+                rcmd.remote_reset(ws, hard=True)
+                break
             except Exception as e:
                 print(f"reset: {e}")
         elif c == "restart":
             try:
-                remote_restart(ws) #this executes worker restart command. My own
-                break  # Exit after reset
+                rcmd.remote_restart(ws)
+                break
             except Exception as e:
                 print(f"restart: {e}")
         elif c == "interrupt" or c == "break":
             try:
-                interrupt_running_code(ws)
+                rcmd.interrupt_running_code(ws)
                 print("Interrupt sent.")
-                # Refresh remote cwd after interrupt
-                remotecwd = remote_pwd(ws)
+                remotecwd = rcmd.remote_pwd(ws)
             except Exception as e:
                 print(f"interrupt: {e}")
         elif c == "help":
@@ -513,12 +224,14 @@ def cmdloop(ws):
             print("  cd <dir>          # Change remote directory")
             print("  pwd               # Print remote directory")
             print("  get rfile [lfile] # Download remote file")
+            print("  getall [ldir]     # Recursively download all files from remote pwd")
             print("  put lfile [rfile] # Upload file")
+            print("  del, rm <rfile>   # Delete remote file")
             print("  lls               # List local directory")
             print("  lcd <dir>         # Change local directory")
             print("  lpwd              # Print local directory")
-            print("  reset, reboot     # Soft reset MicroPython board")
-            print("  hardreset         # Hard reset MicroPython board")
+            print("  reset, reboot     # Hard reset MicroPython board")
+            print("  restart           # Restart worker (custom)")
             print("  interrupt, break  # Send Ctrl+C to break running code")
             print("  exit, quit        # Exit")
             print("  help              # This help message")
@@ -528,9 +241,11 @@ def cmdloop(ws):
 
 def help(rc=0):
     print("webrepl_ftp.py - FTP-like client for MicroPython WebREPL")
-    print("Usage: webrepl_ftp.py [-p password] <host>[:port]")
+    print("Usage: webrepl_ftp.py [-p password] [-l local_dir] [-r remote_dir] <host>[:port]")
     print("Options:")
     print("  -p password    Specify password (otherwise prompted)")
+    print("  -l local_dir   Set initial local working directory")
+    print("  -r remote_dir  Set initial remote working directory")
     print("  -h, --help     Show this help")
     sys.exit(rc)
 
@@ -569,13 +284,28 @@ Sec-WebSocket-Key: foo\r
 
 
 def main():
-    # Parse -p password flag first
+    # Parse command-line arguments
     passwd = None
-    for i in range(len(sys.argv)):
-        if sys.argv[i] == '-p':
+    local_dir = None
+    remote_dir = None
+
+    # Parse flags
+    i = 1
+    while i < len(sys.argv):
+        if sys.argv[i] == '-p' and i + 1 < len(sys.argv):
+            passwd = sys.argv[i + 1]
             sys.argv.pop(i)
-            passwd = sys.argv.pop(i)
-            break
+            sys.argv.pop(i)
+        elif sys.argv[i] == '-l' and i + 1 < len(sys.argv):
+            local_dir = sys.argv[i + 1]
+            sys.argv.pop(i)
+            sys.argv.pop(i)
+        elif sys.argv[i] == '-r' and i + 1 < len(sys.argv):
+            remote_dir = sys.argv[i + 1]
+            sys.argv.pop(i)
+            sys.argv.pop(i)
+        else:
+            i += 1
 
     # Check for help
     if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help", "help"):
@@ -583,8 +313,17 @@ def main():
 
     # Minimal args: host [:port]
     if len(sys.argv) < 2:
-        print("Usage: %s [-p password] <host>[:port]" % sys.argv[0])
+        print("Usage: %s [-p password] [-l local_dir] [-r remote_dir] <host>[:port]" % sys.argv[0])
         sys.exit(1)
+
+    # Change local directory if specified
+    if local_dir:
+        try:
+            os.chdir(local_dir)
+            print(f"Changed local directory to: {os.getcwd()}")
+        except Exception as e:
+            print(f"Error: Could not change to local directory '{local_dir}': {e}")
+            sys.exit(1)
 
     hoststr = sys.argv[1]
     port = 8266
@@ -617,7 +356,16 @@ def main():
     ws.ioctl(9, 2)
 
     # Interrupt any running code before starting
-    interrupt_running_code(ws)
+    rcmd.interrupt_running_code(ws)
+
+    # Change remote directory if specified
+    if remote_dir:
+        try:
+            rcmd.remote_cd(ws, remote_dir)
+            actual_dir = rcmd.remote_pwd(ws)
+            print(f"Changed remote directory to: {actual_dir}")
+        except Exception as e:
+            print(f"Warning: Could not change to remote directory '{remote_dir}': {e}")
 
     cmdloop(ws)
     s.close()

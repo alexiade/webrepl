@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="WebREPL-Commander/WebREPL-Commander.csproj" />
+  <Project Path="WebREPL-FTP/WebREPL-FTP.csproj" />
+  <Project Path="WebREPL-KilnPresets/WebREPL-KilnPresets.csproj" />
+  <Project Path="WebREPL.Core/WebREPL.Core.csproj" />
+</Solution>

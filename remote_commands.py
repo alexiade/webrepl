@@ -283,3 +283,54 @@ def print_remote_ls(filelist):
     for name, isdir, size in filelist:
         flag = "d" if isdir else "-"
         print(f"{flag} {name:30} {size:>8}")
+
+
+def remote_del(ws, path):
+    """Delete a file on the remote"""
+    path_escaped = path.replace("'", "\\'")
+    pyexpr = f"import os; os.remove('{path_escaped}')"
+    remote_eval(ws, pyexpr)
+
+
+def remote_getall(ws, remote_base_dir, local_base_dir):
+    """Recursively download all files and directories from remote_base_dir to local_base_dir"""
+
+    def download_recursive(ws, remote_path, local_path):
+        """Recursively download a directory tree"""
+        # Save current remote directory
+        orig_remote_cwd = remote_pwd(ws)
+
+        # Change to the remote directory
+        remote_cd(ws, remote_path)
+
+        # Get file listing
+        files = remote_ls(ws, remote_path)
+
+        # Create local directory if it doesn't exist
+        if not os.path.exists(local_path):
+            os.makedirs(local_path)
+            print(f"Created directory: {local_path}")
+
+        # Process each file/directory
+        for name, isdir, size in files:
+            remote_item = name
+            local_item = os.path.join(local_path, name)
+
+            if isdir:
+                # Recursively download subdirectory
+                print(f"Entering directory: {name}")
+                download_recursive(ws, remote_item, local_item)
+            else:
+                # Download file
+                try:
+                    print(f"Downloading: {name} ({size} bytes)")
+                    get_file(ws, local_item, remote_item)
+                except Exception as e:
+                    print(f"Error downloading {name}: {e}")
+
+        # Restore original remote directory
+        remote_cd(ws, orig_remote_cwd)
+
+    # Start the recursive download
+    download_recursive(ws, remote_base_dir, local_base_dir)
+    print(f"\nDownload complete. Files saved to: {local_base_dir}")
