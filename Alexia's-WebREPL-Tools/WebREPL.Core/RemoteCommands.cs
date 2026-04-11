@@ -1,21 +1,114 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace WebREPL.Core;
 
 public static class RemoteCommands
 {
+    private static string DecodeResponse(byte[] data)
+    {
+        var decoder = Encoding.UTF8.GetDecoder();
+        decoder.Fallback = new DecoderReplacementFallback("");
+
+        var charCount = decoder.GetCharCount(data, 0, data.Length, flush: true);
+        var chars = new char[charCount];
+        decoder.GetChars(data, 0, data.Length, chars, 0, flush: true);
+
+        var text = new string(chars);
+
+        text = Regex.Replace(text, @"\x1b\[[0-9;]*[a-zA-Z]", "");
+        text = Regex.Replace(text, @"[\x00-\x08\x0B-\x0C\x0E-\x1F]", "");
+
+        return text;
+    }
+
     public static async Task<string> RemoteEvalAsync(WebSocket ws, string pythonExpression, CancellationToken cancellationToken = default)
     {
         await ClearBufferAsync(ws, 500, cancellationToken);
 
-        var command = pythonExpression + "\r\n";
-        var commandBytes = Encoding.UTF8.GetBytes(command);
+        var fullCommand = PythonSnippets.WrapWithMarker(pythonExpression) + "\r\n";
+        var commandBytes = Encoding.UTF8.GetBytes(fullCommand);
         await ws.WriteAsync(commandBytes, WebSocket.WEBREPL_FRAME_TXT, cancellationToken);
 
-        await Task.Delay(100, cancellationToken);
+        var buffer = new List<byte>();
+        var startTime = DateTime.UtcNow;
+        var timeout = TimeSpan.FromSeconds(30);
+        var marker = PythonSnippets.Marker;
 
-        var output = await ws.ReadAvailableAsync(65536, 1000, cancellationToken);
-        return Encoding.UTF8.GetString(output);
+        while ((DateTime.UtcNow - startTime) < timeout)
+        {
+            try
+            {
+                var chunk = await ws.ReadAvailableAsync(Int32.MaxValue, 500, cancellationToken);
+                if (chunk.Length > 0)
+                {
+                    buffer.AddRange(chunk);
+
+                    var tempString = DecodeResponse(buffer.ToArray());
+                    var markerCount = CountStringOccurrences(tempString, marker);
+                    if (markerCount >= 2)
+                    {
+                        break;
+                    }
+                }
+
+                await Task.Delay(10, cancellationToken);
+            }
+            catch (Exception)
+            {
+                break;
+            }
+        }
+
+        var response = DecodeResponse(buffer.ToArray());
+        var markerFinalCount = CountStringOccurrences(response, marker);
+
+        if (markerFinalCount < 2)
+        {
+            return "";
+        }
+
+        var parts = response.Split(marker);
+        if (parts.Length < 2)
+        {
+            return "";
+        }
+
+        var output = parts[1];
+
+        if (output.StartsWith("')"))
+        {
+            output = output[2..];
+        }
+
+        var cleanOutput = output.Trim();
+
+        while (cleanOutput.StartsWith(">>>") || cleanOutput.EndsWith(">>>"))
+        {
+            if (cleanOutput.StartsWith(">>>"))
+                cleanOutput = cleanOutput[3..].Trim();
+            if (cleanOutput.EndsWith(">>>"))
+                cleanOutput = cleanOutput[..^3].Trim();
+        }
+
+        return cleanOutput.Trim();
+    }
+
+    private static int CountStringOccurrences(string text, string pattern)
+    {
+        if (string.IsNullOrEmpty(pattern))
+            return 0;
+
+        int count = 0;
+        int index = 0;
+
+        while ((index = text.IndexOf(pattern, index, StringComparison.Ordinal)) != -1)
+        {
+            count++;
+            index += pattern.Length;
+        }
+
+        return count;
     }
 
     public static async Task ClearBufferAsync(WebSocket ws, int timeoutMs = 500, CancellationToken cancellationToken = default)
@@ -23,56 +116,86 @@ public static class RemoteCommands
         await ws.ReadAvailableAsync(65536, timeoutMs, cancellationToken);
     }
 
-    public static async Task InterruptRunningCodeAsync(WebSocket ws, CancellationToken cancellationToken = default)
+    public static async Task<bool> InterruptRunningCodeAsync(WebSocket ws, CancellationToken cancellationToken = default)
     {
         await ClearBufferAsync(ws, 500, cancellationToken);
 
-        var ctrlC = new byte[] { 0x03, 0x03 };
-        await ws.WriteAsync(ctrlC, WebSocket.WEBREPL_FRAME_TXT, cancellationToken);
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            await ws.WriteAsync(new byte[] { 0x03 }, WebSocket.WEBREPL_FRAME_TXT, cancellationToken);
+            await Task.Delay(100, cancellationToken);
+        }
 
-        await Task.Delay(100, cancellationToken);
-        await ClearBufferAsync(ws, 500, cancellationToken);
+        await Task.Delay(500, cancellationToken);
+
+        var buffer = new List<byte>();
+        var startTime = DateTime.UtcNow;
+        var timeout = TimeSpan.FromMilliseconds(500);
+
+        while ((DateTime.UtcNow - startTime) < timeout)
+        {
+            var chunk = await ws.ReadAvailableAsync(1024, 100, cancellationToken);
+            if (chunk.Length > 0)
+            {
+                buffer.AddRange(chunk);
+            }
+            await Task.Delay(10, cancellationToken);
+        }
+
+        var response = DecodeResponse(buffer.ToArray());
+
+        if (response.Contains(">>>"))
+        {
+            return true;
+        }
+
+        await ws.WriteAsync(Encoding.UTF8.GetBytes("\r\n"), WebSocket.WEBREPL_FRAME_TXT, cancellationToken);
+        await Task.Delay(300, cancellationToken);
+
+        buffer.Clear();
+        startTime = DateTime.UtcNow;
+        timeout = TimeSpan.FromMilliseconds(300);
+
+        while ((DateTime.UtcNow - startTime) < timeout)
+        {
+            var chunk = await ws.ReadAvailableAsync(1024, 100, cancellationToken);
+            if (chunk.Length > 0)
+            {
+                buffer.AddRange(chunk);
+            }
+            await Task.Delay(10, cancellationToken);
+        }
+
+        response = DecodeResponse(buffer.ToArray());
+        return response.Contains(">>>");
     }
 
     public static async Task<List<RemoteFileInfo>> RemoteLsAsync(WebSocket ws, string? path = null, CancellationToken cancellationToken = default)
     {
-        var pathArg = path != null ? $"'{path.Replace("'", "\\'")}'" : "";
-        var pyExpr = $@"
-import os
-try:
-    items = os.listdir({pathArg}) if '{pathArg}' else os.listdir()
-    for item in items:
-        try:
-            stat = os.stat(item if not '{pathArg}' else '{pathArg}/' + item)
-            isdir = (stat[0] & 0x4000) != 0
-            size = stat[6]
-            print(f'{{item}},{{isdir}},{{size}}')
-        except:
-            pass
-except Exception as e:
-    print(f'Error: {{e}}')
-";
-
+        var pyExpr = PythonSnippets.ListDirectory();
         var output = await RemoteEvalAsync(ws, pyExpr, cancellationToken);
         var files = new List<RemoteFileInfo>();
 
-        foreach (var line in output.Split('\n'))
+        var lines = output.Trim().Split('\n');
+        foreach (var line in lines)
         {
-            var trimmed = line.Trim();
-            if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith(">>>") || trimmed.StartsWith("import") || 
-                trimmed.StartsWith("try:") || trimmed.StartsWith("Error:"))
-                continue;
-
-            var parts = trimmed.Split(',');
-            if (parts.Length == 3)
+            if (line.Contains(','))
             {
-                var name = parts[0];
-                if (name is "." or "..")
-                    continue;
-
-                if (bool.TryParse(parts[1], out var isDir) && int.TryParse(parts[2], out var size))
+                var entries = line.Trim().Split(';');
+                foreach (var entry in entries)
                 {
-                    files.Add(new RemoteFileInfo(name, isDir, size));
+                    var parts = entry.Split(',');
+                    if (parts.Length == 3)
+                    {
+                        var name = parts[0];
+                        if (name is "." or "..")
+                            continue;
+
+                        if (bool.TryParse(parts[1], out var isDir) && int.TryParse(parts[2], out var size))
+                        {
+                            files.Add(new RemoteFileInfo(name, isDir, size));
+                        }
+                    }
                 }
             }
         }
@@ -83,13 +206,13 @@ except Exception as e:
     public static async Task RemoteCdAsync(WebSocket ws, string path, CancellationToken cancellationToken = default)
     {
         var pathEscaped = path.Replace("'", "\\'");
-        var pyExpr = $"import os; os.chdir('{pathEscaped}')";
+        var pyExpr = PythonSnippets.ChangeDirectory(pathEscaped);
         await RemoteEvalAsync(ws, pyExpr, cancellationToken);
     }
 
     public static async Task<string> RemotePwdAsync(WebSocket ws, CancellationToken cancellationToken = default)
     {
-        var pyExpr = "import os;print(os.getcwd())";
+        var pyExpr = PythonSnippets.GetCurrentDirectory();
         var output = await RemoteEvalAsync(ws, pyExpr, cancellationToken);
 
         var lines = output.Trim().Split('\n');
@@ -109,21 +232,21 @@ except Exception as e:
     public static async Task RemoteDeleteAsync(WebSocket ws, string path, CancellationToken cancellationToken = default)
     {
         var pathEscaped = path.Replace("'", "\\'");
-        var pyExpr = $"import os; os.remove('{pathEscaped}')";
+        var pyExpr = PythonSnippets.DeleteFile(pathEscaped);
         await RemoteEvalAsync(ws, pyExpr, cancellationToken);
     }
 
     public static async Task RemoteMkdirAsync(WebSocket ws, string path, CancellationToken cancellationToken = default)
     {
         var pathEscaped = path.Replace("'", "\\'");
-        var pyExpr = $"import os; os.mkdir('{pathEscaped}')";
+        var pyExpr = PythonSnippets.MakeDirectory(pathEscaped);
         await RemoteEvalAsync(ws, pyExpr, cancellationToken);
     }
 
     public static async Task RemoteRmdirAsync(WebSocket ws, string path, CancellationToken cancellationToken = default)
     {
         var pathEscaped = path.Replace("'", "\\'");
-        var pyExpr = $"import os; os.rmdir('{pathEscaped}')";
+        var pyExpr = PythonSnippets.RemoveDirectory(pathEscaped);
         await RemoteEvalAsync(ws, pyExpr, cancellationToken);
     }
 
@@ -132,8 +255,8 @@ except Exception as e:
         await ClearBufferAsync(ws, 500, cancellationToken);
 
         var pyExpr = hard 
-            ? "import machine; machine.reset()" 
-            : "import machine; machine.soft_reset()";
+            ? PythonSnippets.HardReset()
+            : PythonSnippets.SoftReset();
 
         var command = pyExpr + "\r\n";
         var commandBytes = Encoding.UTF8.GetBytes(command);

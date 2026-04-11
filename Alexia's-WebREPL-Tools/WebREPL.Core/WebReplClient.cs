@@ -87,7 +87,7 @@ public class WebReplClient : IDisposable
         var versionCmd = Encoding.UTF8.GetBytes("\x06");
         await _websocket.WriteAsync(versionCmd, WebSocket.WEBREPL_FRAME_BIN, cancellationToken);
 
-        var response = await _websocket.ReadAsync(4, cancellationToken);
+        var response = await _websocket.ReadAsync(4, false, cancellationToken);
         if (response.Length >= 3)
         {
             return $"{response[1]}.{response[2]}.{response[3]}";
@@ -120,7 +120,7 @@ public class WebReplClient : IDisposable
 
         await _websocket.WriteAsync(header, WebSocket.WEBREPL_FRAME_BIN, cancellationToken);
 
-        var response = await _websocket.ReadAsync(4, cancellationToken);
+        var response = await _websocket.ReadAsync(4, false, cancellationToken);
 
         var buffer = new byte[1024];
         int totalSent = 0;
@@ -139,7 +139,7 @@ public class WebReplClient : IDisposable
             }
         }
 
-        response = await _websocket.ReadAsync(4, cancellationToken);
+        response = await _websocket.ReadAsync(4, false, cancellationToken);
     }
 
     public async Task GetFileAsync(string remotePath, string localPath, IProgress<FileTransferProgress>? progress = null, CancellationToken cancellationToken = default)
@@ -158,27 +158,27 @@ public class WebReplClient : IDisposable
 
         await _websocket.WriteAsync(header, WebSocket.WEBREPL_FRAME_BIN, cancellationToken);
 
-        var response = await _websocket.ReadAsync(4, cancellationToken);
+        var response = await _websocket.ReadAsync(4, false, cancellationToken);
 
         using var fileStream = File.Create(localPath);
         int totalReceived = 0;
 
         while (true)
         {
-            var sizeBytes = await _websocket.ReadAsync(2, cancellationToken);
+            var sizeBytes = await _websocket.ReadAsync(2, false, cancellationToken);
             var chunkSize = BitConverter.ToUInt16(sizeBytes, 0);
 
             if (chunkSize == 0)
                 break;
 
-            var data = await _websocket.ReadAsync(chunkSize, cancellationToken);
+            var data = await _websocket.ReadAsync(chunkSize, false, cancellationToken);
             await fileStream.WriteAsync(data, cancellationToken);
             totalReceived += data.Length;
 
             progress?.Report(new FileTransferProgress(totalReceived, totalReceived, remotePath, localPath));
         }
 
-        response = await _websocket.ReadAsync(4, cancellationToken);
+        response = await _websocket.ReadAsync(4, false, cancellationToken);
     }
 
     public async Task<string> ExecuteAsync(string pythonCode, CancellationToken cancellationToken = default)
@@ -188,11 +188,11 @@ public class WebReplClient : IDisposable
         return await RemoteCommands.RemoteEvalAsync(_websocket, pythonCode, cancellationToken);
     }
 
-    public async Task InterruptAsync(CancellationToken cancellationToken = default)
+    public async Task<bool> InterruptAsync(CancellationToken cancellationToken = default)
     {
         if (_websocket == null) throw new InvalidOperationException("Not connected");
 
-        await RemoteCommands.InterruptRunningCodeAsync(_websocket, cancellationToken);
+        return await RemoteCommands.InterruptRunningCodeAsync(_websocket, cancellationToken);
     }
 
     public WebSocket GetWebSocket()

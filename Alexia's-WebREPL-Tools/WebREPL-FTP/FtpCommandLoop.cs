@@ -18,9 +18,20 @@ public class FtpCommandLoop
         Console.WriteLine("\nWebREPL FTP Client");
         Console.WriteLine("Type 'help' for available commands\n");
 
+        string remotePath = "/";
+        try
+        {
+            remotePath = await RemoteCommands.RemotePwdAsync(_ws);
+        }
+        catch
+        {
+            Console.WriteLine("Warning: Could not determine remote path");
+        }
+
         while (true)
         {
-            Console.Write("webrepl> ");
+            var localPath = Directory.GetCurrentDirectory();
+            Console.Write($"[L:{localPath}] [R:{remotePath}]\nwebrepl> ");
             var input = Console.ReadLine()?.Trim();
 
             if (string.IsNullOrEmpty(input))
@@ -50,7 +61,6 @@ public class FtpCommandLoop
                         break;
 
                     case "pwd":
-                        var remotePath = await RemoteCommands.RemotePwdAsync(_ws);
                         Console.WriteLine(remotePath);
                         break;
 
@@ -61,8 +71,8 @@ public class FtpCommandLoop
                             break;
                         }
                         await RemoteCommands.RemoteCdAsync(_ws, args[0]);
-                        var newPath = await RemoteCommands.RemotePwdAsync(_ws);
-                        Console.WriteLine($"Remote directory: {newPath}");
+                        remotePath = await RemoteCommands.RemotePwdAsync(_ws);
+                        Console.WriteLine($"Remote directory: {remotePath}");
                         break;
 
                     case "lcd":
@@ -77,8 +87,8 @@ public class FtpCommandLoop
 
                     case "lls":
                     case "ldir":
-                        var localPath = args.Length > 0 ? args[0] : ".";
-                        var localFiles = Directory.GetFileSystemEntries(localPath);
+                        var localListPath = args.Length > 0 ? args[0] : ".";
+                        var localFiles = Directory.GetFileSystemEntries(localListPath);
                         foreach (var file in localFiles)
                         {
                             var info = new FileInfo(file);

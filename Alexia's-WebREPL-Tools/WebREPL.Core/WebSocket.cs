@@ -4,12 +4,13 @@ namespace WebREPL.Core;
 
 public class WebSocket : IDisposable
 {
-    public const byte WEBREPL_FRAME_TXT = 1;
-    public const byte WEBREPL_FRAME_BIN = 2;
+    public const byte WEBREPL_FRAME_TXT = 0x81;
+    public const byte WEBREPL_FRAME_BIN = 0x82;
 
     private readonly NetworkStream _stream;
     private byte _frameType = WEBREPL_FRAME_TXT;
     private bool _disposed;
+    private readonly List<byte> _buffer = new(); // Persistent buffer for ReadAsync
 
     public WebSocket(NetworkStream stream)
     {
@@ -29,7 +30,7 @@ public class WebSocket : IDisposable
     public async Task WriteAsync(byte[] data, byte frameType, CancellationToken cancellationToken = default)
     {
         var header = new byte[2];
-        header[0] = (byte)(0x80 | frameType);
+        header[0] = (byte)(0x80 | (frameType & 0x0F));
         header[1] = (byte)data.Length;
 
         if (data.Length < 126)
@@ -57,21 +58,55 @@ public class WebSocket : IDisposable
         await _stream.FlushAsync(cancellationToken);
     }
 
-    public async Task<byte[]> ReadAsync(int count, CancellationToken cancellationToken = default)
+    public async Task<byte[]> ReadAsync(int count, bool textOk = false, CancellationToken cancellationToken = default)
     {
-        var buffer = new byte[count];
-        var totalRead = 0;
-
-        while (totalRead < count)
+        // Read frames until buffer has enough data (like Python's self.buf)
+        while (_buffer.Count < count)
         {
-            var bytesRead = await _stream.ReadAsync(buffer.AsMemory(totalRead, count - totalRead), cancellationToken);
-            if (bytesRead == 0)
-                throw new IOException("Connection closed while reading data");
+            // Read frame header
+            var header = new byte[2];
+            await ReadExactlyAsync(header, cancellationToken);
 
-            totalRead += bytesRead;
+            byte frameType = header[0];
+            int length = header[1] & 0x7F;
+
+            // Handle extended length
+            if (length == 126)
+            {
+                var lenBytes = new byte[2];
+                await ReadExactlyAsync(lenBytes, cancellationToken);
+                if (BitConverter.IsLittleEndian)
+                    Array.Reverse(lenBytes);
+                length = BitConverter.ToUInt16(lenBytes, 0);
+            }
+
+            // Read frame payload
+            var payload = new byte[length];
+            await ReadExactlyAsync(payload, cancellationToken);
+
+            // Accept binary frames, or text frames if textOk=true (like Python)
+            if (frameType == WEBREPL_FRAME_BIN || (textOk && frameType == WEBREPL_FRAME_TXT))
+            {
+                _buffer.AddRange(payload);
+            }
+            // Skip other frame types (REPL echo during file transfer)
         }
 
-        return buffer;
+        // Return requested bytes and remove from buffer (like Python's d = self.buf[:size]; self.buf = self.buf[size:])
+        var result = _buffer.Take(count).ToArray();
+        _buffer.RemoveRange(0, count);
+        return result;
+    }
+
+    private async Task ReadExactlyAsync(byte[] buffer, CancellationToken cancellationToken)
+    {
+        int offset = 0;
+        while (offset < buffer.Length)
+        {
+            var read = await _stream.ReadAsync(buffer.AsMemory(offset), cancellationToken);
+            if (read == 0) throw new IOException("Connection closed");
+            offset += read;
+        }
     }
 
     public async Task<byte[]> ReadAvailableAsync(int maxBytes, int timeoutMs = 100, CancellationToken cancellationToken = default)
@@ -79,35 +114,43 @@ public class WebSocket : IDisposable
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(timeoutMs);
 
-        var buffer = new List<byte>();
-        var tempBuffer = new byte[Math.Min(1024, maxBytes)];
+        var payload = new List<byte>();
 
         try
         {
-            while (buffer.Count < maxBytes)
+            while (payload.Count < maxBytes && _stream.DataAvailable)
             {
-                if (!_stream.DataAvailable)
+                // Read frame header
+                var header = new byte[2];
+                await ReadExactlyAsync(header, cts.Token);
+
+                byte frameType = header[0];
+                int length = header[1] & 0x7F;
+
+                // Handle extended length
+                if (length == 126)
                 {
-                    await Task.Delay(10, cts.Token);
-                    if (!_stream.DataAvailable)
-                        break;
+                    var lenBytes = new byte[2];
+                    await ReadExactlyAsync(lenBytes, cts.Token);
+                    if (BitConverter.IsLittleEndian)
+                        Array.Reverse(lenBytes);
+                    length = BitConverter.ToUInt16(lenBytes, 0);
                 }
 
-                var toRead = Math.Min(tempBuffer.Length, maxBytes - buffer.Count);
-                var bytesRead = await _stream.ReadAsync(tempBuffer.AsMemory(0, toRead), cts.Token);
+                // Read frame payload
+                var frameData = new byte[length];
+                await ReadExactlyAsync(frameData, cts.Token);
 
-                if (bytesRead == 0)
-                    break;
-
-                buffer.AddRange(tempBuffer.Take(bytesRead));
+                // Accept all frames for ReadAvailableAsync (text commands)
+                payload.AddRange(frameData);
             }
         }
         catch (OperationCanceledException)
         {
-            // Timeout reached, return what we have
+            // Timeout - return what we have
         }
 
-        return buffer.ToArray();
+        return payload.ToArray();
     }
 
     public void Dispose()
