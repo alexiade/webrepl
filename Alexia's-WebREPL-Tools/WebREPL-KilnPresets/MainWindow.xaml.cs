@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using WebREPL.Core;
 
@@ -32,6 +34,15 @@ public partial class MainWindow : Window
 
     private void LoadLocalLibrary()
     {
+        var expandedCategories = new HashSet<string>();
+        foreach (TreeViewItem item in LocalTreeView.Items)
+        {
+            if (item.IsExpanded && item.Tag is string category)
+            {
+                expandedCategories.Add(category);
+            }
+        }
+
         LocalTreeView.Items.Clear();
         var presets = _libraryManager.LoadAllPresets();
         var categories = presets.GroupBy(p => p.Category).OrderBy(g => g.Key);
@@ -40,17 +51,24 @@ public partial class MainWindow : Window
         {
             var categoryNode = new TreeViewItem
             {
-                Header = category.Key,
-                Tag = category.Key
+                Header = $"📁 {category.Key} ({category.Count()})",
+                Tag = category.Key,
+                IsExpanded = expandedCategories.Contains(category.Key)
             };
 
             foreach (var preset in category.OrderBy(p => p.Key))
             {
                 var presetNode = new TreeViewItem
                 {
-                    Header = $"{preset.Key} - {preset.Name}",
+                    Header = $"📄 {preset.Key}",
                     Tag = preset
                 };
+
+                if (!string.IsNullOrWhiteSpace(preset.Name))
+                {
+                    presetNode.Header = $"📄 {preset.Key} - {preset.Name}";
+                }
+
                 categoryNode.Items.Add(presetNode);
             }
 
@@ -329,6 +347,40 @@ public partial class MainWindow : Window
         }
     }
 
+    private void SaveAsCopy_Click(object sender, RoutedEventArgs e)
+    {
+        if (LocalTreeView.SelectedItem is TreeViewItem item && item.Tag is FirePreset preset)
+        {
+            var dialog = new SaveAsCopyDialog(preset.Key);
+            if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(dialog.NewKey))
+            {
+                try
+                {
+                    var newPreset = new FirePreset
+                    {
+                        Key = dialog.NewKey.Trim(),
+                        Category = preset.Category,
+                        Name = preset.Name,
+                        Phases = preset.Phases.Select(p => new FireInstruction
+                        {
+                            Type = p.Type,
+                            Duration = p.Duration,
+                            Target = p.Target
+                        }).ToList()
+                    };
+
+                    _libraryManager.SavePreset(newPreset);
+                    LoadLocalLibrary();
+                    StatusBarText.Text = $"Copied '{preset.Key}' to '{newPreset.Key}'";
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Error saving copy: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+    }
+
     private async void RemoteTreeView_DoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (_client == null) return;
@@ -577,5 +629,18 @@ public partial class MainWindow : Window
                 StatusBarText.Text = "Upload failed";
             }
         }
+    }
+}
+
+public class IsStringConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        return value is string;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        throw new NotImplementedException();
     }
 }

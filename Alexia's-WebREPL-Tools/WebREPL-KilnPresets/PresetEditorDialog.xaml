@@ -50,41 +50,166 @@
                     </Grid.RowDefinitions>
 
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
-                        <Button Content="Add Heat (H)" Click="AddHeat_Click" Width="100" Margin="0,0,5,0"/>
-                        <Button Content="Add Ramp (R)" Click="AddRamp_Click" Width="100" Margin="0,0,5,0"/>
-                        <Button Content="Add Drop (D)" Click="AddDown_Click" Width="100" Margin="0,0,5,0"/>
-                        <Button Content="Add Soak (S)" Click="AddSoak_Click" Width="100" Margin="0,0,5,0"/>
-                        <Button Content="Add Cool (C)" Click="AddCool_Click" Width="100" Margin="0,0,5,0"/>
+                        <Button Content="Add Heat (H)" Click="AddHeat_Click" Width="100" Margin="0,0,5,0" Padding="5" Background="#FFF3E0" BorderBrush="#FF9800"/>
+                        <Button Content="Add Ramp (R)" Click="AddRamp_Click" Width="100" Margin="0,0,5,0" Padding="5" Background="#E8F5E9" BorderBrush="#4CAF50"/>
+                        <Button Content="Add Drop (D)" Click="AddDown_Click" Width="100" Margin="0,0,5,0" Padding="5" Background="#E3F2FD" BorderBrush="#2196F3"/>
+                        <Button Content="Add Soak (S)" Click="AddSoak_Click" Width="100" Margin="0,0,5,0" Padding="5" Background="#F3E5F5" BorderBrush="#9C27B0"/>
+                        <Button Content="Add Cool (C)" Click="AddCool_Click" Width="100" Margin="0,0,5,0" Padding="5" Background="#E0F2F1" BorderBrush="#009688"/>
                     </StackPanel>
 
                     <DataGrid Grid.Row="1" x:Name="InstructionsGrid" 
                               AutoGenerateColumns="False"
                               CanUserAddRows="False"
                               SelectionMode="Single"
+                              AllowDrop="True"
+                              DragOver="InstructionsGrid_DragOver"
+                              Drop="InstructionsGrid_Drop"
+                              PreviewMouseLeftButtonDown="InstructionsGrid_PreviewMouseLeftButtonDown"
+                              MouseMove="InstructionsGrid_MouseMove"
+                              GridLinesVisibility="Horizontal"
+                              HeadersVisibility="Column"
+                              BorderBrush="#CCCCCC"
+                              BorderThickness="1"
                               Margin="5">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow">
+                                <Setter Property="Background" Value="White"/>
+                                <Setter Property="Padding" Value="2"/>
+                                <Style.Triggers>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Background" Value="#E3F2FD"/>
+                                        <Setter Property="BorderBrush" Value="#2196F3"/>
+                                        <Setter Property="BorderThickness" Value="2,0,2,0"/>
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#F5F5F5"/>
+                                        <Setter Property="Cursor" Value="Hand"/>
+                                    </Trigger>
+                                    <MultiTrigger>
+                                        <MultiTrigger.Conditions>
+                                            <Condition Property="IsSelected" Value="True"/>
+                                            <Condition Property="IsMouseOver" Value="True"/>
+                                        </MultiTrigger.Conditions>
+                                        <Setter Property="Background" Value="#BBDEFB"/>
+                                    </MultiTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.ColumnHeaderStyle>
+                            <Style TargetType="DataGridColumnHeader">
+                                <Setter Property="Background" Value="#F0F0F0"/>
+                                <Setter Property="Foreground" Value="#333333"/>
+                                <Setter Property="FontWeight" Value="Bold"/>
+                                <Setter Property="Padding" Value="8,6"/>
+                                <Setter Property="BorderBrush" Value="#CCCCCC"/>
+                                <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                            </Style>
+                        </DataGrid.ColumnHeaderStyle>
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Type" Binding="{Binding DisplayName}" IsReadOnly="True" Width="100"/>
                         <DataGridTemplateColumn Header="Target Temp (°C)" Width="120">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <TextBox Text="{Binding Target, UpdateSourceTrigger=PropertyChanged}" 
-                                             Visibility="{Binding ShowTarget, Converter={StaticResource BoolToVisConverter}}"
-                                             BorderThickness="0"/>
+                                    <Grid Visibility="{Binding ShowTarget, Converter={StaticResource BoolToVisConverter}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="20"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox Grid.Column="0" 
+                                                 Text="{Binding Target, UpdateSourceTrigger=PropertyChanged}" 
+                                                 VerticalContentAlignment="Center"
+                                                 BorderThickness="0"
+                                                 Padding="5,0"/>
+                                        <Grid Grid.Column="1">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="*"/>
+                                                <RowDefinition Height="*"/>
+                                            </Grid.RowDefinitions>
+                                            <Button Grid.Row="0" Content="▲" FontSize="8" Padding="0" 
+                                                    Click="TargetUp_Click"/>
+                                            <Button Grid.Row="1" Content="▼" FontSize="8" Padding="0"
+                                                    Click="TargetDown_Click"/>
+                                        </Grid>
+                                    </Grid>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Duration" Width="200">
+                        <DataGridTemplateColumn Header="Duration" Width="250">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <StackPanel Orientation="Horizontal" 
-                                                Visibility="{Binding ShowDuration, Converter={StaticResource BoolToVisConverter}}">
-                                        <TextBox Width="40" Margin="2" Text="{Binding Path=DurationHours, UpdateSourceTrigger=PropertyChanged}"/>
-                                        <TextBlock Text="h" VerticalAlignment="Center" Margin="2"/>
-                                        <TextBox Width="40" Margin="2" Text="{Binding Path=DurationMinutes, UpdateSourceTrigger=PropertyChanged}"/>
-                                        <TextBlock Text="m" VerticalAlignment="Center" Margin="2"/>
-                                        <TextBox Width="40" Margin="2" Text="{Binding Path=DurationSeconds, UpdateSourceTrigger=PropertyChanged}"/>
-                                        <TextBlock Text="s" VerticalAlignment="Center" Margin="2"/>
-                                    </StackPanel>
+                                    <Grid Visibility="{Binding ShowDuration, Converter={StaticResource BoolToVisConverter}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="70"/>
+                                            <ColumnDefinition Width="15"/>
+                                            <ColumnDefinition Width="70"/>
+                                            <ColumnDefinition Width="15"/>
+                                            <ColumnDefinition Width="70"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- Hours -->
+                                        <Grid Grid.Column="0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="20"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Grid.Column="0" 
+                                                     Text="{Binding DurationHours, UpdateSourceTrigger=PropertyChanged}" 
+                                                     VerticalContentAlignment="Center"
+                                                     Padding="3,0"/>
+                                            <Grid Grid.Column="1">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="*"/>
+                                                    <RowDefinition Height="*"/>
+                                                </Grid.RowDefinitions>
+                                                <Button Grid.Row="0" Content="▲" FontSize="7" Padding="0" Click="HoursUp_Click"/>
+                                                <Button Grid.Row="1" Content="▼" FontSize="7" Padding="0" Click="HoursDown_Click"/>
+                                            </Grid>
+                                        </Grid>
+
+                                        <TextBlock Grid.Column="1" Text="h" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+
+                                        <!-- Minutes -->
+                                        <Grid Grid.Column="2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="20"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Grid.Column="0" 
+                                                     Text="{Binding DurationMinutes, UpdateSourceTrigger=PropertyChanged}" 
+                                                     VerticalContentAlignment="Center"
+                                                     Padding="3,0"/>
+                                            <Grid Grid.Column="1">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="*"/>
+                                                    <RowDefinition Height="*"/>
+                                                </Grid.RowDefinitions>
+                                                <Button Grid.Row="0" Content="▲" FontSize="7" Padding="0" Click="MinutesUp_Click"/>
+                                                <Button Grid.Row="1" Content="▼" FontSize="7" Padding="0" Click="MinutesDown_Click"/>
+                                            </Grid>
+                                        </Grid>
+
+                                        <TextBlock Grid.Column="3" Text="m" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+
+                                        <!-- Seconds -->
+                                        <Grid Grid.Column="4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="20"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Grid.Column="0" 
+                                                     Text="{Binding DurationSeconds, UpdateSourceTrigger=PropertyChanged}" 
+                                                     VerticalContentAlignment="Center"
+                                                     Padding="3,0"/>
+                                            <Grid Grid.Column="1">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="*"/>
+                                                    <RowDefinition Height="*"/>
+                                                </Grid.RowDefinitions>
+                                                <Button Grid.Row="0" Content="▲" FontSize="7" Padding="0" Click="SecondsUp_Click"/>
+                                                <Button Grid.Row="1" Content="▼" FontSize="7" Padding="0" Click="SecondsDown_Click"/>
+                                            </Grid>
+                                        </Grid>
+                                    </Grid>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
@@ -124,7 +249,9 @@
         </GroupBox>
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
-            <Button Content="Save" Click="Save_Click" Width="80" Margin="0,0,10,0" IsDefault="True"/>
+            <Button Content="↶ Undo" Click="Undo_Click" Width="80" Margin="0,0,5,0" x:Name="UndoButton" IsEnabled="False" ToolTip="Undo last change (Ctrl+Z)"/>
+            <Button Content="↷ Redo" Click="Redo_Click" Width="80" Margin="0,0,15,0" x:Name="RedoButton" IsEnabled="False" ToolTip="Redo last undone change (Ctrl+Y)"/>
+            <Button Content="Save" Click="Save_Click" Width="80" Margin="0,0,5,0" IsDefault="True" Background="#4CAF50" Foreground="White" FontWeight="Bold"/>
             <Button Content="Cancel" Click="Cancel_Click" Width="80" IsCancel="True"/>
         </StackPanel>
     </Grid>

@@ -3,9 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:WebREPL_KilnPresets"
         mc:Ignorable="d"
         Title="Kiln Fire Preset Manager" Height="600" Width="1000"
         Loaded="Window_Loaded">
+    <Window.Resources>
+        <local:IsStringConverter x:Key="IsStringConverter"/>
+    </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -55,12 +59,32 @@
                               AllowDrop="True"
                               Drop="LocalTreeView_Drop"
                               DragOver="LocalTreeView_DragOver"
-                              Margin="5">
+                              Margin="5"
+                              BorderThickness="1"
+                              BorderBrush="#CCCCCC">
+                        <TreeView.Resources>
+                            <Style TargetType="TreeViewItem">
+                                <Setter Property="Padding" Value="4"/>
+                                <Setter Property="Margin" Value="0,1"/>
+                                <Setter Property="FontSize" Value="13"/>
+                                <Style.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#F0F0F0"/>
+                                    </Trigger>
+                                    <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}, Converter={StaticResource IsStringConverter}}" Value="True">
+                                        <Setter Property="FontWeight" Value="SemiBold"/>
+                                        <Setter Property="Foreground" Value="#2C5AA0"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TreeView.Resources>
                         <TreeView.ContextMenu>
                             <ContextMenu>
                                 <MenuItem Header="Push to Device" Click="PushToDevice_Click"/>
                                 <Separator/>
                                 <MenuItem Header="Edit" Click="EditPreset_Click"/>
+                                <MenuItem Header="Save As Copy..." Click="SaveAsCopy_Click"/>
+                                <Separator/>
                                 <MenuItem Header="Delete" Click="DeletePreset_Click"/>
                             </ContextMenu>
                         </TreeView.ContextMenu>

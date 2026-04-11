@@ -7,8 +7,10 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace WebREPL_KilnPresets;
 
@@ -17,10 +19,33 @@ public partial class PresetEditorDialog : Window
     public FirePreset? Preset { get; private set; }
     private ObservableCollection<InstructionViewModel> _instructions = new();
     private const float ESTIMATED_RATE = 300.0f; // °C per hour for Heat and Drop
+    private int _draggedIndex = -1;
+    private bool _isDragging = false;
+    private Point _dragStartPoint;
+
+    private Stack<List<FireInstruction>> _undoStack = new();
+    private Stack<List<FireInstruction>> _redoStack = new();
+    private bool _isUndoRedoOperation = false;
+    private DispatcherTimer _undoSaveTimer;
+    private bool _hasUnsavedChanges = false;
 
     public PresetEditorDialog(FirePreset? preset, List<string> categories)
     {
         InitializeComponent();
+
+        _undoSaveTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(500)
+        };
+        _undoSaveTimer.Tick += (s, e) =>
+        {
+            _undoSaveTimer.Stop();
+            if (_hasUnsavedChanges)
+            {
+                SaveUndoState();
+                _hasUnsavedChanges = false;
+            }
+        };
 
         CategoryComboBox.ItemsSource = categories;
 
@@ -45,49 +70,205 @@ public partial class PresetEditorDialog : Window
 
         InstructionsGrid.ItemsSource = _instructions;
 
-        _instructions.CollectionChanged += (s, e) => UpdateProfileChart();
+        _instructions.CollectionChanged += (s, e) =>
+        {
+            UpdateProfileChart();
+            if (!_isUndoRedoOperation && e.Action != NotifyCollectionChangedAction.Move)
+            {
+                MarkChangeForUndo();
+            }
+        };
+
         foreach (var instruction in _instructions)
         {
-            instruction.PropertyChanged += (s, e) => UpdateProfileChart();
+            instruction.PropertyChanged += (s, e) =>
+            {
+                UpdateProfileChart();
+                if (!_isUndoRedoOperation)
+                {
+                    MarkChangeForUndo();
+                }
+            };
         }
 
         ProfileCanvas.SizeChanged += (s, e) => UpdateProfileChart();
 
+        KeyBindings();
         UpdateProfileChart();
+    }
+
+    private void KeyBindings()
+    {
+        var undoCommand = new RoutedCommand();
+        undoCommand.InputGestures.Add(new KeyGesture(Key.Z, ModifierKeys.Control));
+        CommandBindings.Add(new CommandBinding(undoCommand, (s, e) => Undo_Click(s, e)));
+
+        var redoCommand = new RoutedCommand();
+        redoCommand.InputGestures.Add(new KeyGesture(Key.Y, ModifierKeys.Control));
+        CommandBindings.Add(new CommandBinding(redoCommand, (s, e) => Redo_Click(s, e)));
+    }
+
+    private void MarkChangeForUndo()
+    {
+        _hasUnsavedChanges = true;
+        _undoSaveTimer.Stop();
+        _undoSaveTimer.Start();
+    }
+
+    private void SaveUndoState()
+    {
+        var state = _instructions.Select(vm => vm.ToFireInstruction()).Select(fi => new FireInstruction
+        {
+            Type = fi.Type,
+            Duration = fi.Duration,
+            Target = fi.Target
+        }).ToList();
+
+        _undoStack.Push(state);
+        _redoStack.Clear();
+
+        UndoButton.IsEnabled = _undoStack.Count > 1; // Need at least 2 states to undo
+        RedoButton.IsEnabled = false;
+    }
+
+    private void Undo_Click(object sender, RoutedEventArgs e)
+    {
+        if (_undoStack.Count <= 1) return; // Need at least 2 states (current + previous)
+
+        _undoSaveTimer.Stop();
+        _hasUnsavedChanges = false;
+
+        // Save current state to redo
+        var currentState = _undoStack.Pop();
+        _redoStack.Push(currentState);
+
+        // Get previous state
+        var previousState = _undoStack.Peek();
+
+        // Restore previous state
+        _isUndoRedoOperation = true;
+        _instructions.Clear();
+        foreach (var instruction in previousState)
+        {
+            var vm = new InstructionViewModel(instruction);
+            vm.PropertyChanged += (s, ev) =>
+            {
+                UpdateProfileChart();
+                if (!_isUndoRedoOperation)
+                {
+                    MarkChangeForUndo();
+                }
+            };
+            _instructions.Add(vm);
+        }
+        _isUndoRedoOperation = false;
+
+        UpdateProfileChart();
+        UndoButton.IsEnabled = _undoStack.Count > 1;
+        RedoButton.IsEnabled = _redoStack.Count > 0;
+    }
+
+    private void Redo_Click(object sender, RoutedEventArgs e)
+    {
+        if (_redoStack.Count == 0) return;
+
+        _undoSaveTimer.Stop();
+        _hasUnsavedChanges = false;
+
+        // Get next state from redo
+        var nextState = _redoStack.Pop();
+        _undoStack.Push(nextState);
+
+        // Restore next state
+        _isUndoRedoOperation = true;
+        _instructions.Clear();
+        foreach (var instruction in nextState)
+        {
+            var vm = new InstructionViewModel(instruction);
+            vm.PropertyChanged += (s, ev) =>
+            {
+                UpdateProfileChart();
+                if (!_isUndoRedoOperation)
+                {
+                    MarkChangeForUndo();
+                }
+            };
+            _instructions.Add(vm);
+        }
+        _isUndoRedoOperation = false;
+
+        UpdateProfileChart();
+        UndoButton.IsEnabled = _undoStack.Count > 1;
+        RedoButton.IsEnabled = _redoStack.Count > 0;
     }
 
     private void AddHeat_Click(object sender, RoutedEventArgs e)
     {
         var vm = new InstructionViewModel(new FireInstruction { Type = "H" });
-        vm.PropertyChanged += (s, e) => UpdateProfileChart();
+        vm.PropertyChanged += (s, ev) =>
+        {
+            UpdateProfileChart();
+            if (!_isUndoRedoOperation)
+            {
+                MarkChangeForUndo();
+            }
+        };
         _instructions.Add(vm);
     }
 
     private void AddRamp_Click(object sender, RoutedEventArgs e)
     {
         var vm = new InstructionViewModel(new FireInstruction { Type = "R", Duration = 0, Target = 0 });
-        vm.PropertyChanged += (s, e) => UpdateProfileChart();
+        vm.PropertyChanged += (s, ev) =>
+        {
+            UpdateProfileChart();
+            if (!_isUndoRedoOperation)
+            {
+                MarkChangeForUndo();
+            }
+        };
         _instructions.Add(vm);
     }
 
     private void AddDown_Click(object sender, RoutedEventArgs e)
     {
         var vm = new InstructionViewModel(new FireInstruction { Type = "D", Target = 0 });
-        vm.PropertyChanged += (s, e) => UpdateProfileChart();
+        vm.PropertyChanged += (s, ev) =>
+        {
+            UpdateProfileChart();
+            if (!_isUndoRedoOperation)
+            {
+                MarkChangeForUndo();
+            }
+        };
         _instructions.Add(vm);
     }
 
     private void AddSoak_Click(object sender, RoutedEventArgs e)
     {
         var vm = new InstructionViewModel(new FireInstruction { Type = "S", Duration = 0 });
-        vm.PropertyChanged += (s, e) => UpdateProfileChart();
+        vm.PropertyChanged += (s, ev) =>
+        {
+            UpdateProfileChart();
+            if (!_isUndoRedoOperation)
+            {
+                MarkChangeForUndo();
+            }
+        };
         _instructions.Add(vm);
     }
 
     private void AddCool_Click(object sender, RoutedEventArgs e)
     {
         var vm = new InstructionViewModel(new FireInstruction { Type = "C", Duration = 0, Target = 0 });
-        vm.PropertyChanged += (s, e) => UpdateProfileChart();
+        vm.PropertyChanged += (s, ev) =>
+        {
+            UpdateProfileChart();
+            if (!_isUndoRedoOperation)
+            {
+                MarkChangeForUndo();
+            }
+        };
         _instructions.Add(vm);
     }
 
@@ -120,6 +301,205 @@ public partial class PresetEditorDialog : Window
         if (sender is Button button && button.DataContext is InstructionViewModel instruction)
         {
             _instructions.Remove(instruction);
+        }
+    }
+
+    private void InstructionsGrid_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is DataGrid grid)
+        {
+            var row = FindVisualParent<DataGridRow>(e.OriginalSource as DependencyObject);
+            if (row != null && row.Item is InstructionViewModel)
+            {
+                _draggedIndex = grid.Items.IndexOf(row.Item);
+                _dragStartPoint = e.GetPosition(grid);
+                _isDragging = false;
+
+                // Select the row visually
+                grid.SelectedItem = row.Item;
+            }
+        }
+    }
+
+    private void InstructionsGrid_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton == MouseButtonState.Pressed && _draggedIndex >= 0 && sender is DataGrid grid)
+        {
+            var currentPoint = e.GetPosition(grid);
+            var diff = _dragStartPoint - currentPoint;
+
+            // Start drag if moved enough distance
+            if (!_isDragging && (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance ||
+                                 Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance))
+            {
+                _isDragging = true;
+                grid.SelectedItem = _instructions[_draggedIndex];
+            }
+
+            if (_isDragging)
+            {
+                // Find the row under the cursor
+                var element = grid.InputHitTest(currentPoint) as DependencyObject;
+                var targetRow = FindVisualParent<DataGridRow>(element);
+
+                if (targetRow != null && targetRow.Item is InstructionViewModel)
+                {
+                    var targetIndex = grid.Items.IndexOf(targetRow.Item);
+
+                    if (targetIndex >= 0 && targetIndex != _draggedIndex)
+                    {
+                        // Real-time reordering
+                        var item = _instructions[_draggedIndex];
+                        _instructions.RemoveAt(_draggedIndex);
+                        _instructions.Insert(targetIndex, item);
+                        _draggedIndex = targetIndex;
+
+                        // Keep the item selected
+                        grid.SelectedItem = item;
+                        grid.ScrollIntoView(item);
+                    }
+                }
+            }
+        }
+    }
+
+    private void InstructionsGrid_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = DragDropEffects.Move;
+        e.Handled = true;
+    }
+
+    private void InstructionsGrid_Drop(object sender, DragEventArgs e)
+    {
+        _draggedIndex = -1;
+        _isDragging = false;
+        e.Handled = true;
+    }
+
+    private T? FindVisualParent<T>(DependencyObject? child) where T : DependencyObject
+    {
+        while (child != null)
+        {
+            if (child is T parent)
+                return parent;
+            child = VisualTreeHelper.GetParent(child);
+        }
+        return null;
+    }
+
+    private void TargetUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.DataContext is InstructionViewModel vm)
+        {
+            vm.Target = (vm.Target ?? 0) + 10;
+        }
+    }
+
+    private void TargetDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.DataContext is InstructionViewModel vm)
+        {
+            vm.Target = Math.Max(0, (vm.Target ?? 0) - 10);
+        }
+    }
+
+    private void HoursUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.DataContext is InstructionViewModel vm)
+        {
+            vm.DurationHours++;
+        }
+    }
+
+    private void HoursDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.DataContext is InstructionViewModel vm)
+        {
+            vm.DurationHours = Math.Max(0, vm.DurationHours - 1);
+        }
+    }
+
+    private void MinutesUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.DataContext is InstructionViewModel vm)
+        {
+            if (vm.DurationMinutes >= 59)
+            {
+                vm.DurationMinutes = 0;
+                vm.DurationHours++;
+            }
+            else
+            {
+                vm.DurationMinutes++;
+            }
+        }
+    }
+
+    private void MinutesDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.DataContext is InstructionViewModel vm)
+        {
+            if (vm.DurationMinutes <= 0)
+            {
+                if (vm.DurationHours > 0)
+                {
+                    vm.DurationMinutes = 59;
+                    vm.DurationHours--;
+                }
+            }
+            else
+            {
+                vm.DurationMinutes--;
+            }
+        }
+    }
+
+    private void SecondsUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.DataContext is InstructionViewModel vm)
+        {
+            if (vm.DurationSeconds >= 59)
+            {
+                vm.DurationSeconds = 0;
+                if (vm.DurationMinutes >= 59)
+                {
+                    vm.DurationMinutes = 0;
+                    vm.DurationHours++;
+                }
+                else
+                {
+                    vm.DurationMinutes++;
+                }
+            }
+            else
+            {
+                vm.DurationSeconds++;
+            }
+        }
+    }
+
+    private void SecondsDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.DataContext is InstructionViewModel vm)
+        {
+            if (vm.DurationSeconds <= 0)
+            {
+                if (vm.DurationMinutes > 0)
+                {
+                    vm.DurationSeconds = 59;
+                    vm.DurationMinutes--;
+                }
+                else if (vm.DurationHours > 0)
+                {
+                    vm.DurationSeconds = 59;
+                    vm.DurationMinutes = 59;
+                    vm.DurationHours--;
+                }
+            }
+            else
+            {
+                vm.DurationSeconds--;
+            }
         }
     }
 
