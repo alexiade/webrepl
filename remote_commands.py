@@ -154,7 +154,7 @@ def remote_eval(ws, python_expr, timeout=3000):
     marker = "THE_END_OF_THIS_GENERATED_COMMAND"
     full_cmd = f"{python_expr};print('{marker}')\r\n"
     ws.write(full_cmd.encode("utf-8"), frame=WEBREPL_FRAME_TXT)
-
+    time.sleep(0.5)
     buf = b""
     t_start = time.time()
     marker_bytes = marker.encode("utf-8")

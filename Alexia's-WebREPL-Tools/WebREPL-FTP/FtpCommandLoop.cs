@@ -136,6 +136,42 @@ public class FtpCommandLoop
                         Console.WriteLine($"\nFile uploaded: {remoteFile}");
                         break;
 
+                    case "tget":
+                        if (args.Length < 1)
+                        {
+                            Console.WriteLine("Usage: tget <remote_file> [local_file]");
+                            break;
+                        }
+                        remoteFile = args[0];
+                        localFile = args.Length > 1 ? args[1] : Path.GetFileName(remoteFile);
+
+                        progress = new Progress<FileTransferProgress>(p =>
+                        {
+                            Console.Write($"\rReceived {p.BytesTransferred} bytes");
+                        });
+
+                        await _client.TgetFileAsync(remoteFile, localFile, progress);
+                        Console.WriteLine($"\nFile saved: {localFile}");
+                        break;
+
+                    case "tput":
+                        if (args.Length < 1)
+                        {
+                            Console.WriteLine("Usage: tput <local_file> [remote_file]");
+                            break;
+                        }
+                        localFile = args[0];
+                        remoteFile = args.Length > 1 ? args[1] : Path.GetFileName(localFile);
+
+                        progress = new Progress<FileTransferProgress>(p =>
+                        {
+                            Console.Write($"\rSent {p.BytesTransferred} bytes ({p.PercentComplete:F1}%)");
+                        });
+
+                        await _client.TputFileAsync(localFile, remoteFile, progress);
+                        Console.WriteLine($"\nFile uploaded: {remoteFile}");
+                        break;
+
                     case "rm":
                     case "del":
                         if (args.Length < 1)
@@ -199,8 +235,10 @@ public class FtpCommandLoop
         Console.WriteLine("  cd <dir>          # Change remote directory");
         Console.WriteLine("  lcd [dir]         # Change/show local directory");
         Console.WriteLine("  lls [path]        # List local directory");
-        Console.WriteLine("  get <remote> [local]  # Download file");
-        Console.WriteLine("  put <local> [remote]  # Upload file");
+        Console.WriteLine("  get <remote> [local]  # Download file (binary)");
+        Console.WriteLine("  put <local> [remote]  # Upload file (binary)");
+        Console.WriteLine("  tget <remote> [local] # Download file (text mode)");
+        Console.WriteLine("  tput <local> [remote] # Upload file (text mode)");
         Console.WriteLine("  rm <file>         # Delete remote file");
         Console.WriteLine("  mkdir <dir>       # Create remote directory");
         Console.WriteLine("  rmdir <dir>       # Remove remote directory");

@@ -6,6 +6,7 @@
         xmlns:local="clr-namespace:WebREPL_KilnPresets"
         mc:Ignorable="d"
         Title="Kiln Fire Preset Manager" Height="600" Width="1000"
+        Icon="/KilnPresetIcon.ico"
         Loaded="Window_Loaded">
     <Window.Resources>
         <local:IsStringConverter x:Key="IsStringConverter"/>
@@ -23,7 +24,7 @@
                 <Separator/>
                 <MenuItem Header="_Exit" Click="Exit_Click"/>
             </MenuItem>
-            <MenuItem Header="_Device">
+            <MenuItem Header="_Device" Visibility="Collapsed">
                 <MenuItem Header="_Connect" Click="Connect_Click"/>
                 <MenuItem Header="_Manage Hosts" Click="ManageHosts_Click"/>
                 <Separator/>
@@ -36,18 +37,18 @@
 
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="400"/>
                 <ColumnDefinition Width="5"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <GroupBox Header="Local Library" Grid.Column="0" Margin="5">
+            <GroupBox Header="Preset Library" Grid.Column="0" Margin="5">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    
+
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
                         <Button Content="Refresh" Click="RefreshLocal_Click" Width="80" Margin="0,0,5,0"/>
                         <Button Content="Open Folder" Click="OpenLibraryFolder_Click" Width="80"/>
@@ -59,6 +60,7 @@
                               AllowDrop="True"
                               Drop="LocalTreeView_Drop"
                               DragOver="LocalTreeView_DragOver"
+                              SelectedItemChanged="LocalTreeView_SelectionChanged"
                               Margin="5"
                               BorderThickness="1"
                               BorderBrush="#CCCCCC">
@@ -80,8 +82,7 @@
                         </TreeView.Resources>
                         <TreeView.ContextMenu>
                             <ContextMenu>
-                                <MenuItem Header="Push to Device" Click="PushToDevice_Click"/>
-                                <Separator/>
+                                <MenuItem Header="Push to Device" Click="PushToDevice_Click" Visibility="Collapsed"/>
                                 <MenuItem Header="Edit" Click="EditPreset_Click"/>
                                 <MenuItem Header="Save As Copy..." Click="SaveAsCopy_Click"/>
                                 <Separator/>
@@ -94,7 +95,26 @@
 
             <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="LightGray"/>
 
-            <GroupBox Header="Device (/presets)" Grid.Column="2" Margin="5">
+            <GroupBox Header="Fire Profile Preview" Grid.Column="2" Margin="5" x:Name="PreviewPanel">
+                <Grid>
+                    <TextBlock x:Name="PreviewText" 
+                               Text="Select a preset to preview its fire profile graph."
+                               Margin="10"
+                               FontSize="14"
+                               Foreground="Gray"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"/>
+                    <Canvas x:Name="GraphCanvas" 
+                            Margin="10"
+                            Visibility="Collapsed"
+                            SizeChanged="GraphCanvas_SizeChanged"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Stretch"/>
+                </Grid>
+            </GroupBox>
+
+            <!-- Device panel - hidden -->
+            <GroupBox Header="Device (/presets)" Grid.Column="2" Margin="5" Visibility="Collapsed">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>

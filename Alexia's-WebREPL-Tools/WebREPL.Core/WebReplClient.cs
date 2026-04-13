@@ -1,29 +1,28 @@
-using System.Net.Sockets;
-using System.Net;
+using System.Net.WebSockets;
 using System.Text;
 
 namespace WebREPL.Core;
 
 public class WebReplClient : IDisposable
 {
-    private TcpClient? _tcpClient;
-    private NetworkStream? _stream;
+    private const byte WEBREPL_PUT_FILE = 1;
+    private const byte WEBREPL_GET_FILE = 2;
+    private ClientWebSocket? _clientWebSocket;
     private WebSocket? _websocket;
     private bool _disposed;
 
-    public bool IsConnected => _tcpClient?.Connected ?? false;
+    public bool IsConnected => _clientWebSocket?.State == WebSocketState.Open;
     public string? RemoteVersion { get; private set; }
 
     public async Task<bool> ConnectAsync(string host, int port = 8266, string password = "", CancellationToken cancellationToken = default)
     {
         try
         {
-            _tcpClient = new TcpClient();
-            await _tcpClient.ConnectAsync(host, port, cancellationToken);
-            _stream = _tcpClient.GetStream();
+            _clientWebSocket = new ClientWebSocket();
+            var uri = new Uri($"ws://{host}:{port}");
 
-            await PerformHandshakeAsync(cancellationToken);
-            _websocket = new WebSocket(_stream);
+            await _clientWebSocket.ConnectAsync(uri, cancellationToken);
+            _websocket = new WebSocket(_clientWebSocket);
 
             await LoginAsync(password, cancellationToken);
             RemoteVersion = await GetVersionAsync(cancellationToken);
@@ -36,37 +35,6 @@ public class WebReplClient : IDisposable
         {
             Dispose();
             throw;
-        }
-    }
-
-    private async Task PerformHandshakeAsync(CancellationToken cancellationToken)
-    {
-        if (_stream == null) throw new InvalidOperationException("Stream not initialized");
-
-        var handshake = Encoding.ASCII.GetBytes(
-            "GET / HTTP/1.1\r\n" +
-            "Host: echo.websocket.org\r\n" +
-            "Connection: Upgrade\r\n" +
-            "Upgrade: websocket\r\n" +
-            "Sec-WebSocket-Key: foo\r\n" +
-            "\r\n"
-        );
-
-        await _stream.WriteAsync(handshake, cancellationToken);
-
-        var buffer = new byte[4096];
-        var response = new StringBuilder();
-
-        while (true)
-        {
-            var bytesRead = await _stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
-            if (bytesRead == 0) break;
-
-            var chunk = Encoding.ASCII.GetString(buffer, 0, bytesRead);
-            response.Append(chunk);
-
-            if (response.ToString().Contains("\r\n\r\n"))
-                break;
         }
     }
 
@@ -87,7 +55,7 @@ public class WebReplClient : IDisposable
         var versionCmd = Encoding.UTF8.GetBytes("\x06");
         await _websocket.WriteAsync(versionCmd, WebSocket.WEBREPL_FRAME_BIN, cancellationToken);
 
-        var response = await _websocket.ReadAsync(4, false, cancellationToken);
+        var response = await _websocket.ReadAsync(4, true, cancellationToken);
         if (response.Length >= 3)
         {
             return $"{response[1]}.{response[2]}.{response[3]}";
@@ -96,9 +64,37 @@ public class WebReplClient : IDisposable
         return "unknown";
     }
 
+    private async Task<ushort> ReadResponseAsync(CancellationToken cancellationToken)
+    {
+        // Python: def read_resp(ws):
+        //           data = ws.read(4)
+        //           sig, code = struct.unpack("<2sH", data)
+        //           assert sig == b"WB"
+        //           return code
+        var data = await _websocket!.ReadAsync(4, false, cancellationToken);
+
+        // Unpack: <2sH = 2-byte signature + 2-byte unsigned short (little-endian)
+        var sig = new[] { data[0], data[1] };
+        var code = BitConverter.ToUInt16(data, 2);
+
+        if (sig[0] != (byte)'W' || sig[1] != (byte)'B')
+            throw new InvalidOperationException($"Invalid response signature: expected 'WB', got '{(char)sig[0]}{(char)sig[1]}'");
+
+        return code;
+    }
+
     public async Task PutFileAsync(string localPath, string remotePath, IProgress<FileTransferProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         if (_websocket == null) throw new InvalidOperationException("Not connected");
+
+        // Clear any leftover data in buffer before file transfer
+        _websocket.ClearBuffer();
+
+        // Convert local path to absolute
+        localPath = Path.GetFullPath(localPath);
+
+        // Use remote path as-is (like Python's SANDBOX + remote_file)
+        // DO NOT resolve against pwd - WebREPL expects the path exactly as given
 
         var fileInfo = new FileInfo(localPath);
         if (!fileInfo.Exists)
@@ -109,18 +105,46 @@ public class WebReplClient : IDisposable
         using var fileStream = File.OpenRead(localPath);
 
         var remotePathBytes = Encoding.UTF8.GetBytes(remotePath);
-        var header = new byte[1 + 1 + 2 + 4 + 2 + remotePathBytes.Length];
+
+        if (remotePathBytes.Length > 64)
+            throw new ArgumentException($"Remote path too long: {remotePathBytes.Length} bytes (max 64)", nameof(remotePath));
+
+        // WEBREPL_REQ_S = "<2sBBQLH64s" - fixed 82 byte structure
+        // struct.pack(WEBREPL_REQ_S, b"WA", WEBREPL_PUT_FILE, 0, 0, sz, len(dest_fname), dest_fname)
+        var header = new byte[82];
         header[0] = (byte)'W';
         header[1] = (byte)'A';
+        header[2] = WEBREPL_PUT_FILE;  // operation type (B)
+        header[3] = 0;                  // padding (B)
 
-        BitConverter.GetBytes((ushort)1).CopyTo(header, 2);
-        BitConverter.GetBytes(fileSize).CopyTo(header, 4);
-        BitConverter.GetBytes((ushort)remotePathBytes.Length).CopyTo(header, 8);
-        remotePathBytes.CopyTo(header, 10);
+        // Offset 4-11: Q (8 bytes) - always 0 (little-endian)
+        // All zeros, so endianness doesn't matter
 
-        await _websocket.WriteAsync(header, WebSocket.WEBREPL_FRAME_BIN, cancellationToken);
+        // Offset 12-15: L (4 bytes) - file size (little-endian)
+        var sizeBytes = BitConverter.GetBytes((uint)fileSize);
+        if (!BitConverter.IsLittleEndian)
+            Array.Reverse(sizeBytes);
+        sizeBytes.CopyTo(header, 12);
 
-        var response = await _websocket.ReadAsync(4, false, cancellationToken);
+        // Offset 16-17: H (2 bytes) - filename length (little-endian)
+        var lengthBytes = BitConverter.GetBytes((ushort)remotePathBytes.Length);
+        if (!BitConverter.IsLittleEndian)
+            Array.Reverse(lengthBytes);
+        lengthBytes.CopyTo(header, 16);
+
+        // Offset 18-81: 64s - filename (padded with zeros)
+        Array.Copy(remotePathBytes, 0, header, 18, remotePathBytes.Length);
+
+        // Python: ws.write(rec[:10])
+        //         ws.write(rec[10:])
+        // Split header write for PUT (first 10 bytes, then remaining 72)
+        await _websocket.WriteAsync(header.AsSpan(0, 10).ToArray(), WebSocket.WEBREPL_FRAME_BIN, cancellationToken);
+        await _websocket.WriteAsync(header.AsSpan(10, 72).ToArray(), WebSocket.WEBREPL_FRAME_BIN, cancellationToken);
+
+        // Python: assert read_resp(ws) == 0
+        var responseCode = await ReadResponseAsync(cancellationToken);
+        if (responseCode != 0)
+            throw new IOException($"PUT file request failed with code: {responseCode}");
 
         var buffer = new byte[1024];
         int totalSent = 0;
@@ -139,46 +163,97 @@ public class WebReplClient : IDisposable
             }
         }
 
-        response = await _websocket.ReadAsync(4, false, cancellationToken);
+        // Python: assert read_resp(ws) == 0
+        responseCode = await ReadResponseAsync(cancellationToken);
+        if (responseCode != 0)
+            throw new IOException($"PUT file transfer failed with code: {responseCode}");
     }
 
     public async Task GetFileAsync(string remotePath, string localPath, IProgress<FileTransferProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         if (_websocket == null) throw new InvalidOperationException("Not connected");
 
+        // Clear any leftover data in buffer before file transfer
+        _websocket.ClearBuffer();
+
+        // Drain any unread data from network stream
+        await _websocket.DrainStreamAsync(cancellationToken);
+
+        // Small delay to ensure connection is stable
+        await Task.Delay(50, cancellationToken);
+
+        // Convert local path to absolute
+        localPath = Path.GetFullPath(localPath);
+
+        // Use remote path as-is (like Python's SANDBOX + remote_file)
+        // DO NOT resolve against pwd - WebREPL expects the path exactly as given
         var remotePathBytes = Encoding.UTF8.GetBytes(remotePath);
-        var header = new byte[1 + 1 + 2 + 4 + 2 + remotePathBytes.Length];
+
+        if (remotePathBytes.Length > 64)
+            throw new ArgumentException($"Remote path too long: {remotePathBytes.Length} bytes (max 64)", nameof(remotePath));
+
+        // WEBREPL_REQ_S = "<2sBBQLH64s" - fixed 82 byte structure
+        // struct.pack(WEBREPL_REQ_S, b"WA", WEBREPL_GET_FILE, 0, 0, 0, len(src_fname), src_fname)
+        var header = new byte[82];
         header[0] = (byte)'W';
         header[1] = (byte)'A';
+        header[2] = WEBREPL_GET_FILE;  // operation type (B)
+        header[3] = 0;                  // padding (B)
 
-        BitConverter.GetBytes((ushort)2).CopyTo(header, 2);
-        BitConverter.GetBytes(0).CopyTo(header, 4);
-        BitConverter.GetBytes((ushort)remotePathBytes.Length).CopyTo(header, 8);
-        remotePathBytes.CopyTo(header, 10);
+        // Offset 4-11: Q (8 bytes) - always 0 (little-endian)
+        // All zeros, so endianness doesn't matter
+
+        // Offset 12-15: L (4 bytes) - always 0 for GET (little-endian)
+        // All zeros, so endianness doesn't matter
+
+        // Offset 16-17: H (2 bytes) - filename length (little-endian)
+        var lengthBytes = BitConverter.GetBytes((ushort)remotePathBytes.Length);
+        if (!BitConverter.IsLittleEndian)
+            Array.Reverse(lengthBytes);
+        lengthBytes.CopyTo(header, 16);
+
+        // Offset 18-81: 64s - filename (padded with zeros)
+        Array.Copy(remotePathBytes, 0, header, 18, remotePathBytes.Length);
 
         await _websocket.WriteAsync(header, WebSocket.WEBREPL_FRAME_BIN, cancellationToken);
 
-        var response = await _websocket.ReadAsync(4, false, cancellationToken);
+        // Python: assert read_resp(ws) == 0
+        var responseCode = await ReadResponseAsync(cancellationToken);
+        /*if (responseCode != 0)
+            throw new IOException($"GET file request failed with code: {responseCode}");*/
 
         using var fileStream = File.Create(localPath);
         int totalReceived = 0;
 
         while (true)
         {
+            await _websocket.WriteAsync(new byte[] { 0 }, WebSocket.WEBREPL_FRAME_BIN, cancellationToken);
+
             var sizeBytes = await _websocket.ReadAsync(2, false, cancellationToken);
             var chunkSize = BitConverter.ToUInt16(sizeBytes, 0);
 
             if (chunkSize == 0)
                 break;
 
-            var data = await _websocket.ReadAsync(chunkSize, false, cancellationToken);
-            await fileStream.WriteAsync(data, cancellationToken);
-            totalReceived += data.Length;
+            int remainingInChunk = chunkSize;
+            while (remainingInChunk > 0)
+            {
+                var buf = await _websocket.ReadAsync(remainingInChunk, false, cancellationToken);
+                if (buf.Length == 0)
+                    throw new IOException("Connection closed while receiving file data");
 
-            progress?.Report(new FileTransferProgress(totalReceived, totalReceived, remotePath, localPath));
+                await fileStream.WriteAsync(buf, cancellationToken);
+                totalReceived += buf.Length;
+                remainingInChunk -= buf.Length;
+
+                progress?.Report(new FileTransferProgress(totalReceived, totalReceived, remotePath, localPath));
+            }
         }
 
-        response = await _websocket.ReadAsync(4, false, cancellationToken);
+        // Python: assert read_resp(ws) == 0
+        responseCode = await ReadResponseAsync(cancellationToken);
+        if (responseCode != 0)
+            throw new IOException($"GET file transfer failed with code: {responseCode}");
     }
 
     public async Task<string> ExecuteAsync(string pythonCode, CancellationToken cancellationToken = default)
@@ -195,6 +270,86 @@ public class WebReplClient : IDisposable
         return await RemoteCommands.InterruptRunningCodeAsync(_websocket, cancellationToken);
     }
 
+    public async Task TputFileAsync(string localPath, string remotePath, IProgress<FileTransferProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        if (_websocket == null) throw new InvalidOperationException("Not connected");
+
+        localPath = Path.GetFullPath(localPath);
+        var fileInfo = new FileInfo(localPath);
+        if (!fileInfo.Exists)
+            throw new FileNotFoundException($"Local file not found: {localPath}");
+
+        // Read the file content
+        var content = await File.ReadAllTextAsync(localPath, cancellationToken);
+        var totalBytes = content.Length;
+
+        // Escape the content for Python string literal
+        var escaped = content
+            .Replace("\\", "\\\\")
+            .Replace("'", "\\'")
+            .Replace("\r\n", "\\n")
+            .Replace("\n", "\\n")
+            .Replace("\r", "\\r")
+            .Replace("\t", "\\t");
+
+        // Split into chunks to avoid command line length issues
+        const int chunkSize = 512;
+        var chunks = new List<string>();
+        for (int i = 0; i < escaped.Length; i += chunkSize)
+        {
+            var chunk = escaped.Substring(i, Math.Min(chunkSize, escaped.Length - i));
+            chunks.Add(chunk);
+        }
+
+        // Create Python code to write the file
+        var remotePathEscaped = remotePath.Replace("'", "\\'");
+
+        // Write in chunks
+        for (int i = 0; i < chunks.Count; i++)
+        {
+            var mode = i == 0 ? "w" : "a";
+            var pythonCode = $"f=open('{remotePathEscaped}','{mode}');f.write('{chunks[i]}');f.close()";
+            await RemoteCommands.RemoteEvalAsync(_websocket, pythonCode, cancellationToken);
+
+            var bytesTransferred = Math.Min((i + 1) * chunkSize, content.Length);
+            progress?.Report(new FileTransferProgress(bytesTransferred, totalBytes, localPath, remotePath));
+        }
+
+        progress?.Report(new FileTransferProgress(totalBytes, totalBytes, localPath, remotePath));
+    }
+
+    public async Task TgetFileAsync(string remotePath, string localPath, IProgress<FileTransferProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        if (_websocket == null) throw new InvalidOperationException("Not connected");
+
+        localPath = Path.GetFullPath(localPath);
+        var remotePathEscaped = remotePath.Replace("'", "\\'");
+
+        // Read the file in chunks to avoid memory issues
+        var pythonCode = $"f=open('{remotePathEscaped}','r');c=f.read();f.close();print(repr(c))";
+        var output = await RemoteCommands.RemoteEvalAsync(_websocket, pythonCode, cancellationToken);
+
+        // Parse the repr() output
+        if (output.StartsWith("'") && output.EndsWith("'"))
+        {
+            output = output[1..^1];
+        }
+
+        // Unescape Python string literals
+        var content = output
+            .Replace("\\n", "\n")
+            .Replace("\\r", "\r")
+            .Replace("\\t", "\t")
+            .Replace("\\'", "'")
+            .Replace("\\\\", "\\");
+
+        // Write to local file
+        await File.WriteAllTextAsync(localPath, content, cancellationToken);
+
+        var bytes = content.Length;
+        progress?.Report(new FileTransferProgress(bytes, bytes, remotePath, localPath));
+    }
+
     public WebSocket GetWebSocket()
     {
         if (_websocket == null) throw new InvalidOperationException("Not connected");
@@ -206,8 +361,7 @@ public class WebReplClient : IDisposable
         if (_disposed) return;
 
         _websocket?.Dispose();
-        _stream?.Dispose();
-        _tcpClient?.Dispose();
+        _clientWebSocket?.Dispose();
 
         _disposed = true;
         GC.SuppressFinalize(this);
