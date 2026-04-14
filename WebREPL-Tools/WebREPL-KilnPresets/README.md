@@ -24,6 +24,7 @@ A WPF application for managing fire presets for kiln controller software via Web
 The application creates a `FirePresetLibrary` folder in your Documents directory. Presets are stored as JSON files organized by category folders.
 
 Example structure:
+
 ```
 Documents/
   FirePresetLibrary/
@@ -37,12 +38,14 @@ Documents/
 ## JSON Format
 
 Each preset file contains:
+
 - `Key`: The file name (without .json extension)
 - `Category`: The category/folder name
 - `Name`: Human-readable description
 - `Phases`: Array of fire instructions (phases)
 
 Example:
+
 ```json
 {
   "Key": "jar_ceramic_cast",

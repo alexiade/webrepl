@@ -32,6 +32,7 @@ A standalone .NET 10 library that implements the WebREPL protocol. It can be use
 - Control device operations (reset, interrupt)
 
 **Key Classes:**
+
 - `WebReplClient` - High-level client API
 - `WebSocket` - Low-level WebSocket wrapper
 - `RemoteCommands` - Static helpers for common operations
@@ -42,6 +43,7 @@ A standalone .NET 10 library that implements the WebREPL protocol. It can be use
 A console application that provides an FTP-like interactive shell for managing MicroPython devices.
 
 **Features:**
+
 - Interactive command-line interface
 - File transfer with progress display
 - Both remote and local directory navigation
@@ -57,6 +59,7 @@ This project is a direct port of:
 - `remote_commands.py` → `WebREPL.Core/RemoteCommands.cs`
 
 All functionality has been preserved and enhanced with:
+
 - Modern async/await patterns
 - IProgress<T> for progress reporting
 - Strong typing with nullable reference types
