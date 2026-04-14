@@ -42,9 +42,9 @@ The original browser-based WebREPL terminal for accessing MicroPython devices. O
 ### 2. Python CLI Tools (`python/`)
 Enhanced command-line utilities that extend the original WebREPL functionality.
 
-**`webrepl_cli.py`** - Simple file transfer utility
+**`webrepl_cli.py`** - Simple command line utility
 ```bash
-python webrepl_cli.py -p password 192.168.4.1:local.py:remote.py
+python webrepl_cli.py -p password 192.168.4.1
 ```
 
 **`webrepl_ftp.py`** - Interactive FTP-like shell
@@ -70,8 +70,6 @@ A complete rewrite in modern C# with async/await patterns, providing:
 - Single-file executable deployment
 - Full IDE support with IntelliSense
 
-### 4. Kiln Control Data (`mess/`)
-JSON configuration files for ceramic kiln firing schedules. These presets define temperature curves for glass fusing and casting operations, intended to be uploaded to MicroPython-controlled kilns.
 
 ## Use Cases
 
