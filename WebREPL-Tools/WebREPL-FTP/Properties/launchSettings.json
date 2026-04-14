@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "WebREPL-FTP": {
-      "commandName": "Project",
-      "commandLineArgs": "192.168.1.154 -p kummik -l \"D:\\_toolkit\\webrepl-gy\\mess\" -r \"/presets/glass\""
-    }
-  }
-}
