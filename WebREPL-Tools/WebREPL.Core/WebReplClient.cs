@@ -52,9 +52,6 @@ public class WebReplClient : IDisposable
         if (_websocket == null) throw new InvalidOperationException("WebSocket not initialized");
 
         _websocket.ClearBuffer();
-        //await _websocket.DrainStreamAsync(cancellationToken);
-        // Wait for response to arrive
-        //await Task.Delay(200, cancellationToken);
 
         var versionCmd = new byte[82];
         versionCmd[0] = (byte)'W';
@@ -187,12 +184,6 @@ public class WebReplClient : IDisposable
 
         // Clear any leftover data in buffer before file transfer
         _websocket.ClearBuffer();
-
-        // Drain any unread data from network stream
-        //await _websocket.DrainStreamAsync(cancellationToken);
-
-        // Small delay to ensure connection is stable
-        //await Task.Delay(500, cancellationToken);
 
         // Convert local path to absolute
         localPath = Path.GetFullPath(localPath);
