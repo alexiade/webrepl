@@ -7,6 +7,7 @@ public class WebReplClient : IDisposable
 {
     private const byte WEBREPL_PUT_FILE = 1;
     private const byte WEBREPL_GET_FILE = 2;
+    private const byte WEBREPL_GET_VERSION = 3;
     private ClientWebSocket? _clientWebSocket;
     private WebSocket? _websocket;
     private bool _disposed;
@@ -26,8 +27,6 @@ public class WebReplClient : IDisposable
 
             await LoginAsync(password, cancellationToken);
             RemoteVersion = await GetVersionAsync(cancellationToken);
-
-            _websocket.SetBinaryMode();
 
             return true;
         }
@@ -52,13 +51,27 @@ public class WebReplClient : IDisposable
     {
         if (_websocket == null) throw new InvalidOperationException("WebSocket not initialized");
 
-        var versionCmd = Encoding.UTF8.GetBytes("\x06");
+        _websocket.ClearBuffer();
+        //await _websocket.DrainStreamAsync(cancellationToken);
+        // Wait for response to arrive
+        //await Task.Delay(200, cancellationToken);
+
+        var versionCmd = new byte[82];
+        versionCmd[0] = (byte)'W';
+        versionCmd[1] = (byte)'A';
+        versionCmd[2] = WEBREPL_GET_VERSION;  // operation type (B)
+        versionCmd[3] = 0;                  // padding (B)
         await _websocket.WriteAsync(versionCmd, WebSocket.WEBREPL_FRAME_BIN, cancellationToken);
 
-        var response = await _websocket.ReadAsync(4, true, cancellationToken);
+        // Wait for response to arrive
+        await Task.Delay(200, cancellationToken);
+
+        // Python: d = ws.read(3); d = struct.unpack("<BBB", d)     
+        var response = await _websocket.ReadAsync(3, false, cancellationToken);
+
         if (response.Length >= 3)
         {
-            return $"{response[1]}.{response[2]}.{response[3]}";
+            return $"{response[0]}.{response[1]}.{response[2]}";
         }
 
         return "unknown";
@@ -71,14 +84,13 @@ public class WebReplClient : IDisposable
         //           sig, code = struct.unpack("<2sH", data)
         //           assert sig == b"WB"
         //           return code
-        var data = await _websocket!.ReadAsync(4, false, cancellationToken);
+        var data = await _websocket!.ReadAsync(2, false, cancellationToken);
+        var size = await _websocket!.ReadAsync(2, false, cancellationToken);
 
-        // Unpack: <2sH = 2-byte signature + 2-byte unsigned short (little-endian)
-        var sig = new[] { data[0], data[1] };
-        var code = BitConverter.ToUInt16(data, 2);
+        if (data[0] != (byte)'W' || data[1] != (byte)'B')
+            throw new InvalidOperationException($"Invalid response signature: expected 'WB', got '{(char)data[0]}{(char)data[1]}'");
 
-        if (sig[0] != (byte)'W' || sig[1] != (byte)'B')
-            throw new InvalidOperationException($"Invalid response signature: expected 'WB', got '{(char)sig[0]}{(char)sig[1]}'");
+        var code = BitConverter.ToUInt16(size, 0);
 
         return code;
     }
@@ -177,10 +189,10 @@ public class WebReplClient : IDisposable
         _websocket.ClearBuffer();
 
         // Drain any unread data from network stream
-        await _websocket.DrainStreamAsync(cancellationToken);
+        //await _websocket.DrainStreamAsync(cancellationToken);
 
         // Small delay to ensure connection is stable
-        await Task.Delay(50, cancellationToken);
+        //await Task.Delay(500, cancellationToken);
 
         // Convert local path to absolute
         localPath = Path.GetFullPath(localPath);
@@ -217,10 +229,13 @@ public class WebReplClient : IDisposable
 
         await _websocket.WriteAsync(header, WebSocket.WEBREPL_FRAME_BIN, cancellationToken);
 
+        // Wait for response to arrive
+        await Task.Delay(200, cancellationToken);
+
         // Python: assert read_resp(ws) == 0
         var responseCode = await ReadResponseAsync(cancellationToken);
-        /*if (responseCode != 0)
-            throw new IOException($"GET file request failed with code: {responseCode}");*/
+        if (responseCode != 0)
+            throw new IOException($"GET file request failed with code: {responseCode}");
 
         using var fileStream = File.Create(localPath);
         int totalReceived = 0;

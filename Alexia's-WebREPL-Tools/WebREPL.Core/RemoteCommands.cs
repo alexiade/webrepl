@@ -24,7 +24,7 @@ public static class RemoteCommands
 
     public static async Task<string> RemoteEvalAsync(WebSocket ws, string pythonExpression, CancellationToken cancellationToken = default)
     {
-        await ClearBufferAsync(ws, 500, cancellationToken);
+        //await ClearBufferAsync(ws, 500, cancellationToken);
 
         var fullCommand = PythonSnippets.WrapWithMarker(pythonExpression) + "\r\n";
         var commandBytes = Encoding.UTF8.GetBytes(fullCommand);
