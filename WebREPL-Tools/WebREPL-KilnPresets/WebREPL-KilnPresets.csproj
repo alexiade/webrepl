@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>WebREPL_KilnPresets</RootNamespace>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>KilnPresetIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WebREPL.Core\WebREPL.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="KilnPresetIcon.ico" />
+  </ItemGroup>
+
+</Project>

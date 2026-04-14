@@ -1,0 +1,38 @@
+{
+  "Key": "jar_ceramic_cast",
+  "Category": "ceramic",
+  "Name": "Standard ceramic jar cast firing schedule",
+  "Phases": [
+    {
+      "Type": "H",
+      "Target": 100
+    },
+    {
+      "Type": "R",
+      "Duration": 7200,
+      "Target": 600
+    },
+    {
+      "Type": "S",
+      "Duration": 1800
+    },
+    {
+      "Type": "R",
+      "Duration": 10800,
+      "Target": 1200
+    },
+    {
+      "Type": "S",
+      "Duration": 3600
+    },
+    {
+      "Type": "C",
+      "Duration": 7200,
+      "Target": 600
+    },
+    {
+      "Type": "D",
+      "Target": 200
+    }
+  ]
+}

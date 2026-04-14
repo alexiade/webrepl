@@ -1,0 +1,30 @@
+<Window x:Class="WebREPL_KilnPresets.HostManagerDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Manage Hosts" Height="450" Width="600"
+        Icon="KilnPresetIcon.ico"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <ListBox x:Name="HostsList" Grid.Column="0" DisplayMemberPath="Name" SelectionChanged="HostsList_SelectionChanged"/>
+
+            <StackPanel Grid.Column="1" Margin="10,0,0,0" Width="100">
+                <Button Content="Add" Click="Add_Click" Margin="0,0,0,10"/>
+                <Button Content="Edit" Click="Edit_Click" Margin="0,0,0,10" x:Name="EditButton" IsEnabled="False"/>
+                <Button Content="Delete" Click="Delete_Click" x:Name="DeleteButton" IsEnabled="False"/>
+            </StackPanel>
+        </Grid>
+
+        <Button Grid.Row="1" Content="Close" Click="Close_Click" Width="80" HorizontalAlignment="Right" Margin="0,10,0,0"/>
+    </Grid>
+</Window>
