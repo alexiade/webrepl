@@ -52,8 +52,6 @@ static async Task<int> RunFtpClientAsync(WebREPL.ProgramOptions options)
         await client.ConnectAsync(host, port, password);
         Console.WriteLine($"Remote WebREPL version: {client.RemoteVersion}");
 
-        await client.InterruptAsync();
-
         if (options.RemoteDir != null)
         {
             try

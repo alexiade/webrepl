@@ -172,7 +172,7 @@ public static class RemoteCommands
 
     public static async Task<List<RemoteFileInfo>> RemoteLsAsync(WebSocket ws, string? path = null, CancellationToken cancellationToken = default)
     {
-        var pyExpr = PythonSnippets.ListDirectory();
+        var pyExpr = PythonSnippets.ListDirectory(path?.Replace("'", "\\'") ?? "");
         var output = await RemoteEvalAsync(ws, pyExpr, cancellationToken);
         var files = new List<RemoteFileInfo>();
 

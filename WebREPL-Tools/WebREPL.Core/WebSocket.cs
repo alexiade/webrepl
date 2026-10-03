@@ -16,6 +16,31 @@ public class WebSocket : IDisposable
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly SemaphoreSlim _receiveLock = new(1, 1);
 
+    // ClientWebSocket allows only one outstanding ReceiveAsync. A receive that outlives a read
+    // timeout is kept here and awaited by the next read; abandoning it would let it swallow the
+    // next frame (e.g. the version reply) and make later reads hang. Guarded by _receiveLock.
+    private Task<(WebSocketReceiveResult Result, byte[] Buffer)>? _pendingReceive;
+
+    private Task<(WebSocketReceiveResult Result, byte[] Buffer)> PendingReceive()
+    {
+        return _pendingReceive ??= ReceiveFrameAsync();
+    }
+
+    private async Task<(WebSocketReceiveResult Result, byte[] Buffer)> ReceiveFrameAsync()
+    {
+        var buffer = new byte[8192];
+        var result = await _clientWebSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+        return (result, buffer);
+    }
+
+    /// <summary>Takes the completed pending receive (call only once it has completed).</summary>
+    private async Task<(WebSocketReceiveResult Result, byte[] Buffer)> TakeReceivedAsync()
+    {
+        var task = _pendingReceive!;
+        _pendingReceive = null;
+        return await task;
+    }
+
     public WebSocket(ClientWebSocket clientWebSocket)
     {
         _clientWebSocket = clientWebSocket ?? throw new ArgumentNullException(nameof(clientWebSocket));
@@ -79,8 +104,8 @@ public class WebSocket : IDisposable
                 await _receiveLock.WaitAsync(cancellationToken);
                 try
                 {
-                    var tempBuffer = new byte[8192];
-                    var result = await _clientWebSocket.ReceiveAsync(new ArraySegment<byte>(tempBuffer), CancellationToken.None);
+                    await PendingReceive();
+                    var (result, tempBuffer) = await TakeReceivedAsync();
 
                     if (result.Count == 0 || result.MessageType == WebSocketMessageType.Close)
                         throw new IOException("Connection closed");
@@ -177,52 +202,18 @@ public class WebSocket : IDisposable
                 if (remaining <= 0)
                     break;
 
-                var tempBuffer = new byte[8192];
                 var timeoutTask = Task.Delay(remaining, cancellationToken);
-                var receiveTask = _clientWebSocket.ReceiveAsync(new ArraySegment<byte>(tempBuffer), CancellationToken.None);
+                var receiveTask = PendingReceive();
 
                 var completed = await Task.WhenAny(receiveTask, timeoutTask);
 
                 if (completed == timeoutTask)
                 {
-                    // CRITICAL: Must wait for pending receive before releasing lock
-                    var extraWait = Task.Delay(50, cancellationToken);
-                    var extraCompleted = await Task.WhenAny(receiveTask, extraWait);
-
-                    if (extraCompleted == receiveTask)
-                    {
-                        try
-                        {
-                            var lateResult = await receiveTask;
-                            if (lateResult.Count > 0 && lateResult.MessageType != WebSocketMessageType.Close)
-                            {
-                                var data = tempBuffer.Take(lateResult.Count).ToArray();
-                                var toTake = Math.Min(data.Length, maxBytes - result.Count);
-                                result.AddRange(data.Take(toTake));
-
-                                // Store remainder in appropriate buffer
-                                if (toTake < data.Length)
-                                {
-                                    var remainder = data.Skip(toTake).ToArray();
-                                    if (lateResult.MessageType == WebSocketMessageType.Binary)
-                                    {
-                                        lock (_binaryBuffer)
-                                            _binaryBuffer.AddRange(remainder);
-                                    }
-                                    else if (lateResult.MessageType == WebSocketMessageType.Text)
-                                    {
-                                        lock (_textBuffer)
-                                            _textBuffer.AddRange(remainder);
-                                    }
-                                }
-                            }
-                        }
-                        catch { }
-                    }
+                    // Nothing arrived in time. The receive stays pending for the next read.
                     break;
                 }
 
-                var receiveResult = await receiveTask;
+                var (receiveResult, tempBuffer) = await TakeReceivedAsync();
 
                 if (receiveResult.Count == 0 || receiveResult.MessageType == WebSocketMessageType.Close)
                     break;
@@ -278,33 +269,19 @@ public class WebSocket : IDisposable
         await _receiveLock.WaitAsync(cancellationToken);
         try
         {
-            var drainBuffer = new byte[4096];
             var timeoutTask = Task.Delay(100, cancellationToken);
-            var pendingReceive = (Task<WebSocketReceiveResult>?)null;
 
             while (_clientWebSocket.State == WebSocketState.Open || _clientWebSocket.State == WebSocketState.CloseReceived)
             {
-                pendingReceive = _clientWebSocket.ReceiveAsync(new ArraySegment<byte>(drainBuffer), CancellationToken.None);
-                var completed = await Task.WhenAny(pendingReceive, timeoutTask);
+                var completed = await Task.WhenAny(PendingReceive(), timeoutTask);
 
                 if (completed == timeoutTask)
                 {
-                    // CRITICAL: Must wait for pending receive before releasing lock
-                    var extraWait = Task.Delay(50, cancellationToken);
-                    var extraCompleted = await Task.WhenAny(pendingReceive, extraWait);
-
-                    if (extraCompleted == pendingReceive)
-                    {
-                        try
-                        {
-                            await pendingReceive;
-                        }
-                        catch { }
-                    }
+                    // Quiet for 100 ms: drained. The receive stays pending for the next read.
                     break;
                 }
 
-                var result = await pendingReceive;
+                var (result, _) = await TakeReceivedAsync();
                 if (result.Count == 0)
                     break;
 

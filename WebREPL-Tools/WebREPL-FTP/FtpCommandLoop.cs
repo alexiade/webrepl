@@ -111,7 +111,7 @@ public class FtpCommandLoop
 
                         var progress = new Progress<FileTransferProgress>(p =>
                         {
-                            Console.Write($"\rReceived {p.BytesTransferred} bytes ({p.PercentComplete:F1}%)");
+                            Console.Write($"\rReceived {p.BytesTransferred} bytes");
                         });
 
                         await _client.GetFileAsync(remoteFile, localFile, progress);
@@ -259,7 +259,8 @@ public class FtpCommandLoop
         foreach (var file in files)
         {
             var flag = file.IsDirectory ? "d" : "-";
-            Console.WriteLine($"{flag} {file.Name,-30} {file.Size,8}");
+            var size = file.IsDirectory ? "" : file.Size.ToString();
+            Console.WriteLine($"{flag} {file.Name,-30} {size,8}");
         }
     }
 

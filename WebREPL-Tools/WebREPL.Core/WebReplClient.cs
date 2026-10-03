@@ -15,7 +15,13 @@ public class WebReplClient : IDisposable
     public bool IsConnected => _clientWebSocket?.State == WebSocketState.Open;
     public string? RemoteVersion { get; private set; }
 
-    public async Task<bool> ConnectAsync(string host, int port = 8266, string password = "", CancellationToken cancellationToken = default)
+    /// <param name="interruptRunningCode">
+    /// Stop whatever program is running (Ctrl-C) right after login. The device only answers
+    /// WebREPL binary requests (version, file transfer) while its REPL is reading input, so
+    /// with main.py running the version request would wait forever.
+    /// </param>
+    public async Task<bool> ConnectAsync(string host, int port = 8266, string password = "", CancellationToken cancellationToken = default,
+        bool interruptRunningCode = true)
     {
         try
         {
@@ -26,6 +32,8 @@ public class WebReplClient : IDisposable
             _websocket = new WebSocket(_clientWebSocket);
 
             await LoginAsync(password, cancellationToken);
+            if (interruptRunningCode)
+                await RemoteCommands.InterruptRunningCodeAsync(_websocket, cancellationToken);
             RemoteVersion = await GetVersionAsync(cancellationToken);
 
             return true;
@@ -252,7 +260,8 @@ public class WebReplClient : IDisposable
                 totalReceived += buf.Length;
                 remainingInChunk -= buf.Length;
 
-                progress?.Report(new FileTransferProgress(totalReceived, totalReceived, remotePath, localPath));
+                // The WebREPL GET protocol doesn't announce the file size: total is unknown (0).
+                progress?.Report(new FileTransferProgress(totalReceived, 0, remotePath, localPath));
             }
         }
 

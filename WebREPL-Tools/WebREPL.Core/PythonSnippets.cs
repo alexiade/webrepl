@@ -4,9 +4,15 @@ public static class PythonSnippets
 {
     public const string Marker = "THE_END_OF_THIS_GENERATED_COMMAND";
 
-    public static string ListDirectory()
+    /// <summary>
+    /// name,isDir,size entries separated by ';'. Uses os.ilistdir so the path is honoured and
+    /// sizes come in the same call; directories report 0 (LittleFS has no meaningful size for
+    /// them, and stat() returns whatever was left over from the previous call).
+    /// </summary>
+    public static string ListDirectory(string pathEscaped = "")
     {
-        return "import os;print(';'.join([f'{f},{os.stat(f)[0] & 0x4000 != 0},{os.stat(f)[6]}' for f in os.listdir()]))";
+        return "import os;print(';'.join(['{},{},{}'.format(e[0], e[1] == 0x4000, e[3] if len(e) > 3 and e[1] != 0x4000 else 0)"
+            + $" for e in os.ilistdir('{pathEscaped}')]))";
     }
 
     public static string ChangeDirectory(string pathEscaped)
