@@ -66,8 +66,17 @@ static async Task<int> RunFtpClientAsync(WebREPL.ProgramOptions options)
             }
         }
 
+        if (client.InterruptedRunningProgram)
+            Console.WriteLine("Note: connecting stopped the program running on the device; it is restarted when you exit.");
+
         var commandLoop = new WebREPL.FtpCommandLoop(client);
         await commandLoop.RunAsync();
+
+        if (!commandLoop.ResetSent && client.InterruptedRunningProgram && !options.KeepStopped)
+        {
+            Console.WriteLine("Restarting the program that was running before this session (soft reset)...");
+            await client.RestartProgramAsync();
+        }
     }
     catch (Exception e)
     {

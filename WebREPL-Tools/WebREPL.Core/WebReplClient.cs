@@ -15,6 +15,9 @@ public class WebReplClient : IDisposable
     public bool IsConnected => _clientWebSocket?.State == WebSocketState.Open;
     public string? RemoteVersion { get; private set; }
 
+    /// <summary>True if connecting stopped a program that was running on the device.</summary>
+    public bool InterruptedRunningProgram { get; private set; }
+
     /// <param name="interruptRunningCode">
     /// Stop whatever program is running (Ctrl-C) right after login. The device only answers
     /// WebREPL binary requests (version, file transfer) while its REPL is reading input, so
@@ -33,7 +36,7 @@ public class WebReplClient : IDisposable
 
             await LoginAsync(password, cancellationToken);
             if (interruptRunningCode)
-                await RemoteCommands.InterruptRunningCodeAsync(_websocket, cancellationToken);
+                InterruptedRunningProgram = (await RemoteCommands.InterruptAsync(_websocket, cancellationToken)).StoppedProgram;
             RemoteVersion = await GetVersionAsync(cancellationToken);
 
             return true;
@@ -276,6 +279,16 @@ public class WebReplClient : IDisposable
         if (_websocket == null) throw new InvalidOperationException("Not connected");
 
         return await RemoteCommands.RemoteEvalAsync(_websocket, pythonCode, cancellationToken);
+    }
+
+    /// <summary>Soft reset (Ctrl-D at the REPL): boot.py and main.py run again.</summary>
+    public async Task RestartProgramAsync(CancellationToken cancellationToken = default)
+    {
+        if (_websocket == null) throw new InvalidOperationException("WebSocket not initialized");
+        await _websocket.WriteAsync(new byte[] { 0x03 }, WebSocket.WEBREPL_FRAME_TXT, cancellationToken); // clear any half-typed line
+        await Task.Delay(200, cancellationToken);
+        await _websocket.WriteAsync(new byte[] { 0x04 }, WebSocket.WEBREPL_FRAME_TXT, cancellationToken);
+        await Task.Delay(500, cancellationToken);
     }
 
     public async Task<bool> InterruptAsync(CancellationToken cancellationToken = default)

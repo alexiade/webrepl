@@ -34,7 +34,16 @@ webrepl-ftp -p mypassword -l ./local_files -r /app 192.168.4.1
 - `-p <password>` - Specify WebREPL password (prompts if not provided)
 - `-l <directory>` - Set initial local working directory
 - `-r <directory>` - Set initial remote working directory
+- `-k, --keep-stopped` - Leave the device at the REPL after the session (see below)
 - `-h, --help` - Show help message
+
+### Running programs
+
+File transfers only work while the device's REPL is reading input, so connecting stops
+whatever program is running (Ctrl-C). If it did, the program is restarted with a soft reset
+(Ctrl-D) when the session ends, unless the session sent `reset` or `-k` was given. Commands
+can also be piped in; end of input ends the session like `exit`. Set `WEBREPL_DEBUG=1` to see
+what the device answered to the interrupt.
 
 ## Interactive Commands
 

@@ -118,6 +118,15 @@ public static class RemoteCommands
 
     public static async Task<bool> InterruptRunningCodeAsync(WebSocket ws, CancellationToken cancellationToken = default)
     {
+        return (await InterruptAsync(ws, cancellationToken)).AtPrompt;
+    }
+
+    /// <summary>
+    /// Ctrl-C until the REPL prompt shows. StoppedProgram is true if that interrupted a running
+    /// program (a KeyboardInterrupt came back), so the caller can restart it afterwards.
+    /// </summary>
+    public static async Task<(bool AtPrompt, bool StoppedProgram)> InterruptAsync(WebSocket ws, CancellationToken cancellationToken = default)
+    {
         await ClearBufferAsync(ws, 500, cancellationToken);
 
         for (int attempt = 0; attempt < 3; attempt++)
@@ -143,10 +152,15 @@ public static class RemoteCommands
         }
 
         var response = DecodeResponse(buffer.ToArray());
+        // A traceback right after our Ctrl-C means a running program was interrupted; its last line
+        // (KeyboardInterrupt) can arrive after this read window, so either one counts.
+        var stoppedProgram = response.Contains("KeyboardInterrupt") || response.Contains("Traceback (most recent call last)");
+        if (Environment.GetEnvironmentVariable("WEBREPL_DEBUG") == "1")
+            Console.WriteLine("[interrupt] " + response.Replace("\r", "").Replace("\n", "|"));
 
         if (response.Contains(">>>"))
         {
-            return true;
+            return (true, stoppedProgram);
         }
 
         await ws.WriteAsync(Encoding.UTF8.GetBytes("\r\n"), WebSocket.WEBREPL_FRAME_TXT, cancellationToken);
@@ -167,7 +181,8 @@ public static class RemoteCommands
         }
 
         response = DecodeResponse(buffer.ToArray());
-        return response.Contains(">>>");
+        return (response.Contains(">>>"), stoppedProgram || response.Contains("KeyboardInterrupt")
+            || response.Contains("Traceback (most recent call last)"));
     }
 
     public static async Task<List<RemoteFileInfo>> RemoteLsAsync(WebSocket ws, string? path = null, CancellationToken cancellationToken = default)

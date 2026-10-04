@@ -7,6 +7,9 @@ public class FtpCommandLoop
     private readonly WebReplClient _client;
     private readonly WebSocket _ws;
 
+    /// <summary>True once a reset was sent (the device restarts by itself).</summary>
+    public bool ResetSent { get; private set; }
+
     public FtpCommandLoop(WebReplClient client)
     {
         _client = client;
@@ -32,8 +35,11 @@ public class FtpCommandLoop
         {
             var localPath = Directory.GetCurrentDirectory();
             Console.Write($"[L:{localPath}] [R:{remotePath}]\nwebrepl> ");
-            var input = Console.ReadLine()?.Trim();
+            var line = Console.ReadLine();
+            if (line == null)
+                return; // end of input (e.g. piped commands without "exit"): same as exit
 
+            var input = line.Trim();
             if (string.IsNullOrEmpty(input))
                 continue;
 
@@ -206,6 +212,7 @@ public class FtpCommandLoop
                     case "reset":
                         var hard = args.Length > 0 && args[0].ToLower() == "hard";
                         await RemoteCommands.RemoteResetAsync(_ws, hard);
+                        ResetSent = true;
                         Console.WriteLine("Reset command sent. Connection will be closed.");
                         return;
 

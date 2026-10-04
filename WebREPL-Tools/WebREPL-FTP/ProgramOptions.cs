@@ -15,4 +15,7 @@ public class ProgramOptions
 
     [Option('r', "remote-dir", Required = false, HelpText = "Initial remote working directory")]
     public string? RemoteDir { get; set; }
+
+    [Option('k', "keep-stopped", Required = false, HelpText = "Don't restart the program that connecting interrupted; leave the device at the REPL")]
+    public bool KeepStopped { get; set; }
 }
