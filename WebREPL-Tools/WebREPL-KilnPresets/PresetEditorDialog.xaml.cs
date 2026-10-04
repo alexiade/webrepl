@@ -117,12 +117,7 @@ public partial class PresetEditorDialog : Window
 
     private void SaveUndoState()
     {
-        var state = _instructions.Select(vm => vm.ToFireInstruction()).Select(fi => new FireInstruction
-        {
-            Type = fi.Type,
-            Duration = fi.Duration,
-            Target = fi.Target
-        }).ToList();
+        var state = _instructions.Select(vm => vm.ToFireInstruction().Clone()).ToList();
 
         _undoStack.Push(state);
         _redoStack.Clear();
@@ -845,6 +840,21 @@ public class InstructionViewModel : INotifyPropertyChanged
         set
         {
             _instruction.Target = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool ShowCone => _instruction.Type == "R";
+
+    private static readonly string[] _coneChoices = new[] { "" }.Concat(FireInstruction.ConeNames).ToArray();
+    public string[] ConeChoices => _coneChoices;
+
+    public string Cone
+    {
+        get => _instruction.Cone ?? "";
+        set
+        {
+            _instruction.Cone = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
             OnPropertyChanged();
         }
     }

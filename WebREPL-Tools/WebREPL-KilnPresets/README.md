@@ -14,7 +14,11 @@ A WPF application for managing fire presets for kiln controller software via Web
 ## Fire Instruction Types
 
 - **H (Heat)**: Heat to target temperature (no duration)
-- **R (Ramp Up)**: Gradual temperature increase over specified duration to target temp
+- **P (Preheat)**: Like Heat, used for drying/preheat schedules (no duration)
+- **R (Ramp Up)**: Gradual temperature increase over specified duration to target temp.
+  Optionally names an Orton **cone** (e.g. `6`): the controller then also ends the ramp once
+  that cone has matured (heat-work), which a kiln that lags near the top reaches below the
+  chart temperature. It never ends later or hotter than the target.
 - **D (Drop)**: Freefall cool to target temperature (no duration)
 - **S (Soak)**: Hold previous target temperature for specified duration
 - **C (Cool)**: Controlled cool down (down ramp) over specified duration to target temp
@@ -43,6 +47,10 @@ Each preset file contains:
 - `Category`: The category/folder name
 - `Name`: Human-readable description
 - `Phases`: Array of fire instructions (phases)
+
+Each phase has `Type`, and depending on the type `Target` (°C), `Duration` (whole seconds)
+and, for ramps, an optional `Cone` (preset version 3, e.g. `"Cone": "6"`). Fields the
+application doesn't know are kept unchanged when a preset is edited or copied.
 
 Example:
 

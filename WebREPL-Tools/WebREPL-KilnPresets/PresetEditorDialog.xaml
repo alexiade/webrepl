@@ -214,6 +214,17 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Cone" Width="90">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <ComboBox Visibility="{Binding ShowCone, Converter={StaticResource BoolToVisConverter}}"
+                                              ItemsSource="{Binding ConeChoices}"
+                                              Text="{Binding Cone, UpdateSourceTrigger=LostFocus}"
+                                              IsEditable="True"
+                                              ToolTip="Orton cone: the ramp also ends once this cone has matured (heat-work). Never later or hotter than the target. Leave empty for none."/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTemplateColumn Header="Actions" Width="*">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>

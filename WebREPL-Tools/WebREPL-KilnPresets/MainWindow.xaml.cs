@@ -366,12 +366,8 @@ public partial class MainWindow : Window
                         Key = dialog.NewKey.Trim(),
                         Category = preset.Category,
                         Name = preset.Name,
-                        Phases = preset.Phases.Select(p => new FireInstruction
-                        {
-                            Type = p.Type,
-                            Duration = p.Duration,
-                            Target = p.Target
-                        }).ToList()
+                        Phases = preset.Phases.Select(p => p.Clone()).ToList(),
+                        Extra = preset.Extra
                     };
 
                     _libraryManager.SavePreset(newPreset);
